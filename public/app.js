@@ -51,18 +51,7 @@ function initSimpleMode() {
     };
   });
 
-  // 전략 선택 → 파라미터 라벨/자연어 박스
-  const stratSel = $('#s-strat');
-  stratSel.onchange = () => {
-    const v = stratSel.value;
-    const custom = v === 'custom';
-    $('#s-nl-wrap').classList.toggle('hidden', !custom);
-    $('#s-parse').classList.toggle('hidden', !custom);
-    $('#s-param-wrap').classList.toggle('hidden', custom);
-    if (!custom) { $('#s-param-label').textContent = S_PARAM[v].label; $('#s-param').value = S_PARAM[v].value; }
-  };
-
-  $('#s-parse').onclick = simpleParse;
+  // 전략은 자연어 입력만 사용 (드롭다운 제거) — 실행 시 해석→백테스트
   $('#s-run').onclick = runSimple;
 }
 
@@ -77,48 +66,43 @@ function periodRange() {
   return { from: f.toISOString().slice(0, 10), to };
 }
 
-// 전략 선택 → 스펙
-function simpleSpec() {
-  const v = $('#s-strat').value;
-  const p = parseFloat($('#s-param').value);
-  if (v === 'ma') return { type: 'ma_timing', maType: 'sma', chosenParam: p };
-  if (v === 'golden') return { type: 'dual_ma', maType: 'sma', fast: 50, chosenParam: p };
-  if (v === 'vol') return { type: 'vol_target', window: 20, chosenParam: p };
-  return SPEC ? SPEC.strategy : { type: 'ma_timing', maType: 'sma', chosenParam: 200 };
-}
-
-// 자연어 해석 → 폼 채우기 (custom)
-async function simpleParse() {
-  const nl = $('#s-nl').value.trim();
-  if (!nl) return;
-  $('#s-status').innerHTML = '<span class="loading"><span class="spinner"></span>해석 중…</span>';
-  try {
-    const r = await (await fetch('/api/parse', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ request: nl }),
-    })).json();
-    if (!r.ok) throw new Error(r.error);
-    SPEC = r.spec;
-    const s = r.spec.strategy;
-    // 전략 타입 매핑
-    const map = { ma_timing: 'ma', dual_ma: 'golden', vol_target: 'vol' };
-    const sv = map[s.type] || 'ma';
-    $('#s-strat').value = 'custom';
-    $('#s-nl-wrap').classList.remove('hidden');
-    // 종목이 인식되면 채움
-    if (r.spec.tickers && r.spec.tickers.length && r.spec.tickers.length <= 12 && !$('#s-tickers').value.trim())
-      $('#s-tickers').value = r.spec.tickers.join(', ');
-    $('#s-status').innerHTML = `<span style="color:var(--dim);font-size:12px">해석됨 — ${r.spec.notes || ''}</span>`;
-  } catch (e) {
-    $('#s-status').innerHTML = `<span class="err">${e.message}</span>`;
-  }
+// 자연어 → 스펙 해석 (/api/parse). 종목 자동 인식 시 폼 채움.
+async function parseNL(nl) {
+  const r = await (await fetch('/api/parse', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ request: nl }),
+  })).json();
+  if (!r.ok) throw new Error(r.error || '해석 실패');
+  SPEC = r.spec;
+  if (r.spec.tickers && r.spec.tickers.length && r.spec.tickers.length <= 12 && !$('#s-tickers').value.trim())
+    $('#s-tickers').value = r.spec.tickers.join(', ');
+  return r.spec;
 }
 
 async function runSimple() {
-  const tickers = $('#s-tickers').value.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
-  if (!tickers.length) { $('#s-status').innerHTML = '<span class="err">종목을 입력하세요.</span>'; return; }
-  const strategy = simpleSpec();
+  const nl = $('#s-nl').value.trim();
+  if (!nl) { $('#s-status').innerHTML = '<span class="err">전략을 자연어로 입력하세요.</span>'; return; }
   const { from, to } = periodRange();
+  const body = $('#s-result-body');
+  $('#s-result-panel').classList.remove('hidden');
+  $('#s-result-panel').classList.add('reveal');
+  body.innerHTML = '<div class="loading"><span class="spinner"></span>전략 해석 중…</div>';
+  $('#s-status').innerHTML = '';
+  $('#s-result-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  let strategy;
+  try {
+    const spec = await parseNL(nl);   // 자연어 → 전략 스펙
+    strategy = spec.strategy;
+  } catch (e) {
+    body.innerHTML = `<div class="err">해석 오류: ${e.message}</div>`;
+    return;
+  }
+  const tickers = $('#s-tickers').value.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
+  if (!tickers.length) { body.innerHTML = '<div class="err">종목을 입력하세요. (또는 전략 문장에 종목을 포함)</div>'; return; }
+  await runWith(tickers, strategy, from, to);
+}
+
+async function runWith(tickers, strategy, from, to) {
   const body = $('#s-result-body');
   $('#s-result-panel').classList.remove('hidden');
   $('#s-result-panel').classList.add('reveal');
