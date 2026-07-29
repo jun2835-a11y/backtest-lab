@@ -25,49 +25,107 @@
       </div>
     </header>
 
-    <div class="pipeline" id="pipeline">
-      <div class="step" data-step="0"><div class="n">01</div><div class="t">요청</div></div>
-      <div class="step" data-step="1"><div class="n">02</div><div class="t">사전등록 잠금</div></div>
-      <div class="step" data-step="2"><div class="n">03</div><div class="t">이중 관문</div></div>
-      <div class="step" data-step="3"><div class="n">04</div><div class="t">평원</div></div>
-      <div class="step" data-step="4"><div class="n">05</div><div class="t">판정 · 안내판</div></div>
+    <!-- 모드 전환 -->
+    <div class="mode-switch">
+      <button class="ms active" data-mode="simple">간편 백테스트</button>
+      <button class="ms" data-mode="pro">정밀 검증 <span class="ms-tag">고급</span></button>
     </div>
 
-    <!-- 1. 요청 -->
-    <section class="panel" id="p-request">
-      <h2><span class="idx">01</span> 자연어 전략 요청</h2>
-      <p class="hint">예: "TQQQ·SOXL에 200일 이동평균 타이밍, 5종목 중 3개 통과해야 채택" — 문장으로 적으세요.</p>
-      <textarea id="request" placeholder="이런 전략 백테스트 해줘 …"></textarea>
-      <div class="examples" id="examples"></div>
-      <div class="btn-row">
-        <button class="btn primary" id="btn-parse">해석 → 사전등록 초안</button>
-        <span id="parse-status"></span>
-      </div>
-    </section>
-
-    <!-- 2. 사전등록 -->
-    <section class="panel hidden" id="p-prereg">
-      <h2><span class="idx">02</span> 사전등록 <span id="reg-seal" class="seal-stamp">등록됨 · 봉인</span></h2>
-      <fieldset id="prereg-form">
-        <div class="prereg-grid" id="prereg-grid"></div>
+    <!-- ══ 간편 모드 ══ -->
+    <div id="mode-simple">
+      <section class="panel">
+        <h2>백테스트</h2>
         <div class="field" style="margin-bottom:16px">
-          <label>대상 종목 (다종목 확장)</label>
-          <div class="ticker-toggles" id="ticker-toggles"></div>
+          <label>종목 — 아무거나 (쉼표로 여러 개)</label>
+          <input id="s-tickers" type="text" placeholder="예: AAPL, TSLA, BTC-USD, SPY, 005930.KS">
+          <div class="chip-presets" id="ticker-presets"></div>
         </div>
-      </fieldset>
-      <div class="btn-row">
-        <button class="btn seal" id="btn-lock">🔒 사전등록 잠금</button>
-        <button class="btn primary hidden" id="btn-run">▶ 안내판 띄우기</button>
-        <button class="btn hidden" id="btn-unlock">잠금 해제(재등록)</button>
-      </div>
-      <div class="locked-notice" id="overfit-notice">⚠ 사전등록 이후 기준을 변경했습니다. 이건 과적합입니다 — 재등록으로 새 봉인을 찍거나 원값으로 되돌리세요.</div>
-    </section>
+        <div class="prereg-grid">
+          <div class="field">
+            <label>전략</label>
+            <select id="s-strat">
+              <option value="ma">이동평균 추세추종 (종가 &gt; 이동평균이면 보유)</option>
+              <option value="golden">골든크로스 (단기 &gt; 장기 이동평균)</option>
+              <option value="vol">변동성 관문 (변동성 낮을 때만 보유)</option>
+              <option value="custom">직접 입력 (자연어)</option>
+            </select>
+          </div>
+          <div class="field" id="s-param-wrap">
+            <label id="s-param-label">이동평균 일수</label>
+            <input id="s-param" type="number" value="200">
+          </div>
+          <div class="field">
+            <label>기간</label>
+            <select id="s-period">
+              <option value="3">최근 3년</option>
+              <option value="5" selected>최근 5년</option>
+              <option value="10">최근 10년</option>
+              <option value="max">최대 (2000~)</option>
+            </select>
+          </div>
+        </div>
+        <div class="field hidden" id="s-nl-wrap" style="margin-bottom:16px">
+          <label>자연어로 전략 설명</label>
+          <input id="s-nl" type="text" placeholder="예: 50일선이 200일선 위일 때만 보유">
+          <div class="sub">해석 버튼을 누르면 위 설정을 자동으로 채웁니다.</div>
+        </div>
+        <div class="btn-row">
+          <button class="btn primary" id="s-run">▶ 백테스트 돌리기</button>
+          <button class="btn hidden" id="s-parse">자연어 해석</button>
+          <span id="s-status"></span>
+        </div>
+        <div class="verdict-legend">판정: 전략이 <b>그냥 사서 들고 있기(매수후보유)</b>보다 위험대비수익(칼마)이 높으면 <b class="q">QUANT</b>, 아니면 <b class="nq">NOT-QUANT</b>.</div>
+      </section>
+      <section class="panel hidden" id="s-result-panel">
+        <h2>결과 · 출발 안내판</h2>
+        <div id="s-result-body"></div>
+      </section>
+    </div>
 
-    <!-- 3. 결과 안내판 -->
-    <section class="panel hidden" id="p-result">
-      <h2><span class="idx">03</span> 판정 · 출발 안내판</h2>
-      <div id="result-body"></div>
-    </section>
+    <!-- ══ 정밀 검증 모드 ══ -->
+    <div id="mode-pro" class="hidden">
+      <div class="pipeline" id="pipeline">
+        <div class="step" data-step="0"><div class="n">01</div><div class="t">요청</div></div>
+        <div class="step" data-step="1"><div class="n">02</div><div class="t">기준 잠금</div></div>
+        <div class="step" data-step="2"><div class="n">03</div><div class="t">이중 관문</div></div>
+        <div class="step" data-step="3"><div class="n">04</div><div class="t">평원</div></div>
+        <div class="step" data-step="4"><div class="n">05</div><div class="t">판정 · 안내판</div></div>
+      </div>
+
+      <section class="panel" id="p-request">
+        <h2><span class="idx">01</span> 자연어 전략 요청</h2>
+        <p class="hint">예: "TQQQ·SOXL에 200일 이동평균 타이밍, 5종목 중 3개 통과해야 채택" — 문장으로 적으세요.</p>
+        <textarea id="request" placeholder="이런 전략 백테스트 해줘 …"></textarea>
+        <div class="examples" id="examples"></div>
+        <div class="btn-row">
+          <button class="btn primary" id="btn-parse">해석 → 기준 초안</button>
+          <span id="parse-status"></span>
+        </div>
+      </section>
+
+      <section class="panel hidden" id="p-prereg">
+        <h2><span class="idx">02</span> 기준 미리 잠그기 <span id="reg-seal" class="seal-stamp">잠김 · 봉인</span></h2>
+        <p class="hint">결과를 본 뒤 기준을 바꾸면 자기기만(과적합)입니다 — 그래서 <b>돌리기 전에</b> 그리드·통과선·평원·과반을 정해 잠급니다.</p>
+        <fieldset id="prereg-form">
+          <div class="prereg-grid" id="prereg-grid"></div>
+          <div class="field" style="margin-bottom:16px">
+            <label>대상 종목 (레버리지 5종목 — 닷컴 3배 합성 가능한 세트)</label>
+            <div class="ticker-toggles" id="ticker-toggles"></div>
+          </div>
+        </fieldset>
+        <div class="btn-row">
+          <button class="btn seal" id="btn-lock">🔒 기준 잠그기</button>
+          <button class="btn primary hidden" id="btn-run">▶ 안내판 띄우기</button>
+          <button class="btn hidden" id="btn-unlock">잠금 해제(다시 정하기)</button>
+        </div>
+        <div class="locked-notice" id="overfit-notice">⚠ 잠근 뒤 기준을 변경했습니다. 이건 과적합입니다 — 다시 잠그거나 원값으로 되돌리세요.</div>
+      </section>
+
+      <section class="panel hidden" id="p-result">
+        <h2><span class="idx">03</span> 판정 · 출발 안내판</h2>
+        <div id="result-body"></div>
+      </section>
+    </div>
 
     <footer class="foot">
       <div>백테스트는 미래 수익을 보장하지 않습니다.</div>

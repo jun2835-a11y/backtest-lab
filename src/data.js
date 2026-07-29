@@ -48,6 +48,8 @@ async function fetchYahoo(symbol, period1, period2) {
     const iso = new Date(ts[i] * 1000).toISOString().slice(0, 10);
     bars.push({ t: ts[i], iso, close: c });
   }
+  bars.name = r.meta?.shortName || r.meta?.symbol || symbol; // 종목명(자유 모드 표시용)
+  bars.currency = r.meta?.currency || '';
   return bars;
 }
 
@@ -65,6 +67,15 @@ export async function getReal(ticker, from, to) {
   const bars = await cached(`real:${ticker}:${from}:${to}`, () =>
     fetchYahoo(ticker, p1, p2));
   return bars;
+}
+
+// 자유 모드: 임의 Yahoo 종목(주식·ETF·지수·코인·환율) 일봉 + 종목명.
+export async function getFree(ticker, from, to) {
+  const sym = String(ticker || '').trim().toUpperCase();
+  if (!sym) throw new Error('빈 종목');
+  const p1 = isoToTs(from), p2 = isoToTs(to);
+  const bars = await cached(`free:${sym}:${from}:${to}`, () => fetchYahoo(sym, p1, p2));
+  return { ticker: sym, name: bars.name || sym, bars };
 }
 
 // 지수 일봉으로부터 3배 합성 시계열을 재구성.

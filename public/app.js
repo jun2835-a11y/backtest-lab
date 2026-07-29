@@ -33,6 +33,176 @@ async function boot() {
     ex.appendChild(c);
   });
   setStep(0);
+  initSimpleMode();
+}
+
+// ── 모드 전환 + 간편 모드 ──
+const TICKER_PRESETS = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'GOOGL', 'SPY', 'QQQ', 'BTC-USD', 'ETH-USD', '005930.KS'];
+const S_PARAM = {
+  ma:     { label: '이동평균 일수', value: 200 },
+  golden: { label: '장기 이동평균 일수', value: 200 },
+  vol:    { label: '변동성 상한 (예 0.025)', value: 0.025 },
+};
+
+function initSimpleMode() {
+  // 모드 토글
+  $$('.mode-switch .ms').forEach((b) => {
+    b.onclick = () => {
+      $$('.mode-switch .ms').forEach((x) => x.classList.toggle('active', x === b));
+      const mode = b.dataset.mode;
+      $('#mode-simple').classList.toggle('hidden', mode !== 'simple');
+      $('#mode-pro').classList.toggle('hidden', mode !== 'pro');
+    };
+  });
+
+  // 종목 프리셋 칩
+  const tp = $('#ticker-presets');
+  TICKER_PRESETS.forEach((t) => {
+    const c = el('span', 'ex', t);
+    c.onclick = () => {
+      const inp = $('#s-tickers');
+      const cur = inp.value.split(',').map((x) => x.trim()).filter(Boolean);
+      if (!cur.map((x) => x.toUpperCase()).includes(t)) cur.push(t);
+      inp.value = cur.join(', ');
+    };
+    tp.appendChild(c);
+  });
+
+  // 전략 선택 → 파라미터 라벨/자연어 박스
+  const stratSel = $('#s-strat');
+  stratSel.onchange = () => {
+    const v = stratSel.value;
+    const custom = v === 'custom';
+    $('#s-nl-wrap').classList.toggle('hidden', !custom);
+    $('#s-parse').classList.toggle('hidden', !custom);
+    $('#s-param-wrap').classList.toggle('hidden', custom);
+    if (!custom) { $('#s-param-label').textContent = S_PARAM[v].label; $('#s-param').value = S_PARAM[v].value; }
+  };
+
+  $('#s-parse').onclick = simpleParse;
+  $('#s-run').onclick = runSimple;
+}
+
+// 기간 프리셋 → from/to
+function periodRange() {
+  const v = $('#s-period').value;
+  const today = new Date();
+  const to = today.toISOString().slice(0, 10);
+  if (v === 'max') return { from: '2000-01-01', to };
+  const y = parseInt(v, 10);
+  const f = new Date(Date.UTC(today.getUTCFullYear() - y, today.getUTCMonth(), today.getUTCDate()));
+  return { from: f.toISOString().slice(0, 10), to };
+}
+
+// 전략 선택 → 스펙
+function simpleSpec() {
+  const v = $('#s-strat').value;
+  const p = parseFloat($('#s-param').value);
+  if (v === 'ma') return { type: 'ma_timing', maType: 'sma', chosenParam: p };
+  if (v === 'golden') return { type: 'dual_ma', maType: 'sma', fast: 50, chosenParam: p };
+  if (v === 'vol') return { type: 'vol_target', window: 20, chosenParam: p };
+  return SPEC ? SPEC.strategy : { type: 'ma_timing', maType: 'sma', chosenParam: 200 };
+}
+
+// 자연어 해석 → 폼 채우기 (custom)
+async function simpleParse() {
+  const nl = $('#s-nl').value.trim();
+  if (!nl) return;
+  $('#s-status').innerHTML = '<span class="loading"><span class="spinner"></span>해석 중…</span>';
+  try {
+    const r = await (await fetch('/api/parse', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ request: nl }),
+    })).json();
+    if (!r.ok) throw new Error(r.error);
+    SPEC = r.spec;
+    const s = r.spec.strategy;
+    // 전략 타입 매핑
+    const map = { ma_timing: 'ma', dual_ma: 'golden', vol_target: 'vol' };
+    const sv = map[s.type] || 'ma';
+    $('#s-strat').value = 'custom';
+    $('#s-nl-wrap').classList.remove('hidden');
+    // 종목이 인식되면 채움
+    if (r.spec.tickers && r.spec.tickers.length && r.spec.tickers.length <= 12 && !$('#s-tickers').value.trim())
+      $('#s-tickers').value = r.spec.tickers.join(', ');
+    $('#s-status').innerHTML = `<span style="color:var(--dim);font-size:12px">해석됨 — ${r.spec.notes || ''}</span>`;
+  } catch (e) {
+    $('#s-status').innerHTML = `<span class="err">${e.message}</span>`;
+  }
+}
+
+async function runSimple() {
+  const tickers = $('#s-tickers').value.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
+  if (!tickers.length) { $('#s-status').innerHTML = '<span class="err">종목을 입력하세요.</span>'; return; }
+  const strategy = simpleSpec();
+  const { from, to } = periodRange();
+  const body = $('#s-result-body');
+  $('#s-result-panel').classList.remove('hidden');
+  $('#s-result-panel').classList.add('reveal');
+  body.innerHTML = '<div class="loading"><span class="spinner"></span>백테스트 실행 중…</div>';
+  $('#s-status').innerHTML = '';
+  $('#s-result-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  try {
+    const r = await (await fetch('/api/simple', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tickers, strategy, from, to }),
+    })).json();
+    if (!r.ok) throw new Error(r.error || '실행 실패');
+    renderSimpleResult(r.result);
+  } catch (e) {
+    body.innerHTML = `<div class="err">실행 오류: ${e.message}</div>`;
+  }
+}
+
+function renderSimpleResult(res) {
+  const body = $('#s-result-body');
+  body.innerHTML = '';
+  const rows = res.rows;
+  const leftW = Math.max(6, ...rows.map((r) => r.ticker.length));
+
+  const board = el('div', 'board wideboard');
+  const stratName = ({ ma_timing: 'MA', dual_ma: '골든크로스', vol_target: '변동성관문' })[res.spec.type] || res.spec.type;
+  board.innerHTML = `
+    <div class="board-caption"><span class="eyebrow">BACK TEST</span><span class="strat">${stratName} · ${res.spec.chosenParam} · ${res.from}~${res.to}</span></div>
+    <div class="board-cols"><div>Ticker</div><div>Verdict</div></div>
+    <div class="board-rows"></div>`;
+  const rowsEl = board.querySelector('.board-rows');
+
+  rows.forEach((r) => {
+    if (r.error) { rowsEl.appendChild(boardRow(r.ticker, 'c-sym', 'NO-DATA', 'c-err', '', leftW, 11)); return; }
+    rowsEl.appendChild(boardRow(r.ticker, 'c-sym', r.pass ? 'QUANT' : 'NOT-QUANT', r.pass ? 'c-quant' : 'c-cut', '', leftW, 11));
+  });
+  rowsEl.appendChild(boardRow('TOTAL', 'c-final', `${res.summary.quant}/${res.summary.total} QUANT`, res.summary.quant ? 'c-quant' : 'c-cut', 'final ' + (res.summary.quant ? 'blue' : 'redrow'), leftW, 13));
+  body.appendChild(board);
+
+  // 수치 표(펼치기)
+  const details = el('div', 'details-section');
+  const btn = el('button', 'btn ghost', '수치 상세 펼치기 ▾');
+  const dc = el('div', 'details hidden');
+  rows.forEach((r) => dc.appendChild(simpleCard(r)));
+  btn.onclick = () => { dc.classList.toggle('hidden'); btn.textContent = dc.classList.contains('hidden') ? '수치 상세 펼치기 ▾' : '접기 ▴'; };
+  details.appendChild(btn); details.appendChild(dc);
+  body.appendChild(details);
+
+  animateBoard(board);
+}
+
+function simpleCard(r) {
+  const card = el('div', 'ticker-card');
+  if (r.error) {
+    card.innerHTML = `<div class="tc-head"><span class="sym">${r.ticker}</span><span class="idx-name">${r.name || ''}</span><span class="verdict-tag fail">${r.error}</span></div>`;
+    return card;
+  }
+  card.innerHTML = `
+    <div class="tc-head">
+      <span class="sym">${r.ticker}</span><span class="idx-name">${r.name || ''}</span>
+      <span class="verdict-tag ${r.pass ? 'pass' : 'fail'}">${r.pass ? 'QUANT' : 'NOT-QUANT'}</span>
+    </div>
+    <div class="tc-body open">
+      ${metricsTable(metricRow('전략', r.strat, 'strat', r.bh) + metricRow('매수후보유', r.bh, 'bh', null))}
+      <div style="color:var(--faint);font-size:10.5px;margin-top:6px">${r.strat.from} → ${r.strat.to} · ${r.strat.bars}봉 · 노출 ${fmtPct(r.strat.exposure)}</div>
+    </div>`;
+  return card;
 }
 
 function setStep(active) {
@@ -230,10 +400,10 @@ function buildSeg(text, cls, width) {
   return seg;
 }
 
-function boardRow(leftText, leftCls, rightText, rightCls, extraCls) {
+function boardRow(leftText, leftCls, rightText, rightCls, extraCls, leftW, rightW) {
   const row = el('div', 'brow ' + (extraCls || ''));
-  row.appendChild(buildSeg(leftText, leftCls, 6));
-  row.appendChild(buildSeg(rightText, rightCls, 11));
+  row.appendChild(buildSeg(leftText, leftCls, leftW || 6));
+  row.appendChild(buildSeg(rightText, rightCls, rightW || 11));
   return row;
 }
 
@@ -399,8 +569,14 @@ function tickerCard(pt) {
   return card;
 }
 
-// 스모크 테스트용 자동 시연: /?demo=1 로 열면 해석→잠금→돌리기를 자동 실행.
+// 스모크 테스트용 자동 시연: /?demo=1(정밀), /?demo=simple(간편).
+async function demoSimple() {
+  $('.mode-switch .ms[data-mode="simple"]').click();
+  $('#s-tickers').value = 'AAPL, NVDA, BTC-USD, SPY, 005930.KS';
+  await runSimple();
+}
 async function demo() {
+  $('.mode-switch .ms[data-mode="pro"]').click();
   $('#request').value = 'TQQQ·SOXL·UPRO·TNA·LABU에 200일 이동평균 타이밍, 5종목 중 3개 통과해야 채택';
   await $('#btn-parse').onclick();
   await new Promise((r) => setTimeout(r, 300));
@@ -410,4 +586,8 @@ async function demo() {
   await $('#btn-run').onclick();
 }
 
-boot().then(() => { if (new URLSearchParams(location.search).get('demo')) demo(); });
+boot().then(() => {
+  const d = new URLSearchParams(location.search).get('demo');
+  if (d === 'simple') demoSimple();
+  else if (d) demo();
+});

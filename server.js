@@ -6,8 +6,9 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { parseRequest } from './src/parse.js';
 import { runProtocol } from './src/protocol.js';
-import { TICKERS, UNIVERSE, REGIMES } from './src/data.js';
-import { STRATEGY_TYPES } from './src/strategy.js';
+import { TICKERS, UNIVERSE, REGIMES, getFree } from './src/data.js';
+import { STRATEGY_TYPES, normalizeSpec, positionsFor, gridFor } from './src/strategy.js';
+import { runBacktest, buyHold } from './src/backtest.js';
 import { PASS_RULES } from './src/protocol.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -50,6 +51,44 @@ app.post('/api/backtest', async (req, res) => {
     if (!preReg || !preReg.strategy) return res.status(400).json({ error: '사전등록 스펙이 필요합니다.' });
     const result = await runProtocol(preReg);
     res.json({ ok: true, result });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+// 자유 모드: 임의 종목 × 전략 단순 백테스트 → 매수후보유 대비 칼마 우위로 QUANT 판정.
+app.post('/api/simple', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const tickers = (body.tickers || []).map((t) => String(t).trim().toUpperCase()).filter(Boolean).slice(0, 12);
+    if (!tickers.length) return res.status(400).json({ error: '종목을 하나 이상 입력하세요.' });
+
+    const spec = normalizeSpec(body.strategy || { type: 'ma_timing', maType: 'sma' });
+    const g = gridFor(spec);
+    const chosen = body.strategy?.chosenParam ?? spec.chosenParam ?? g.grid[Math.floor(g.grid.length / 2)];
+    spec.chosenParam = chosen;
+
+    const to = body.to || new Date().toISOString().slice(0, 10);
+    const from = body.from || `${new Date().getUTCFullYear() - 10}-01-01`;
+
+    const rows = [];
+    for (const t of tickers) {
+      try {
+        const { name, bars } = await getFree(t, from, to);
+        if (!bars || bars.length < 40) { rows.push({ ticker: t, name, error: '데이터 부족(상장 이력이 짧거나 없음)' }); continue; }
+        const closes = bars.map((b) => b.close);
+        const pos = positionsFor(spec, closes, chosen);
+        const strat = runBacktest(bars, pos).metrics;
+        const bh = buyHold(bars).metrics;
+        const pass = strat.calmar > bh.calmar;
+        rows.push({ ticker: t, name, pass, strat, bh });
+      } catch (e) {
+        rows.push({ ticker: t, error: String(e.message || e).slice(0, 100) });
+      }
+    }
+    const quant = rows.filter((r) => r.pass).length;
+    res.json({ ok: true, result: { rows, summary: { quant, total: rows.length }, spec: { type: spec.type, maType: spec.maType, chosenParam: chosen, fast: spec.fast, window: spec.window }, from, to } });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: String(e.message || e) });
