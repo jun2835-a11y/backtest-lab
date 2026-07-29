@@ -202,11 +202,19 @@ async function runWith(tickers, strategy, from, to) {
   }
 }
 
+// 서버 판정 상태 → 보드 색/태그.
+const STATE_CLS = { quant: 'c-quant', weak: 'c-push', push: 'c-push', cut: 'c-cut', err: 'c-err' };
+function boardVerdict(r) {
+  if (r.error) return { tag: 'NO-DATA', cls: 'c-err' };
+  return { tag: r.verdict.label, cls: STATE_CLS[r.verdict.state] || 'c-cut' };
+}
+
 function renderSimpleResult(res) {
   const body = $('#s-result-body');
   body.innerHTML = '';
   const rows = res.rows;
   const leftW = Math.max(6, ...rows.map((r) => r.ticker.length));
+  const c = res.summary.counts;
 
   const board = el('div', 'board wideboard');
   board.innerHTML = `
@@ -214,44 +222,56 @@ function renderSimpleResult(res) {
     <div class="board-cols"><div>Ticker</div><div>Verdict</div></div>
     <div class="board-rows"></div>`;
   const rowsEl = board.querySelector('.board-rows');
-
-  let quant = 0, push = 0;
-  rows.forEach((r) => {
-    const v = verdictOf(r);
-    if (v.state === 'quant') quant++; else if (v.state === 'push') push++;
-    rowsEl.appendChild(boardRow(r.ticker, 'c-sym', v.tag, v.cls, '', leftW, 11));
-  });
-  const finalCls = quant ? 'c-quant' : (push ? 'c-push' : 'c-cut');
-  const finalRow = quant ? 'blue' : (push ? 'amberrow' : 'redrow');
-  rowsEl.appendChild(boardRow('TOTAL', 'c-final', `${quant} QUANT${push ? ' / ' + push + ' PUSH' : ''}`, finalCls, 'final ' + finalRow, leftW, 15));
+  rows.forEach((r) => { const v = boardVerdict(r); rowsEl.appendChild(boardRow(r.ticker, 'c-sym', v.tag, v.cls, '', leftW, 11)); });
+  const totalTxt = `${c.quant} QUANT${c.weak ? ' / ' + c.weak + ' QUANT?' : ''}${c.push ? ' / ' + c.push + ' PUSH' : ''}`;
+  const finalRow = c.quant ? 'blue' : ((c.weak || c.push) ? 'amberrow' : 'redrow');
+  const finalCls = c.quant ? 'c-quant' : ((c.weak || c.push) ? 'c-push' : 'c-cut');
+  rowsEl.appendChild(boardRow('TOTAL', 'c-final', totalTxt, finalCls, 'final ' + finalRow, leftW, Math.max(16, totalTxt.length)));
   body.appendChild(board);
 
-  // 데이터 출처·비용 표기
+  // 다중비교 경고 + 세션 카운터
+  const M = rows.filter((r) => !r.error).length;
+  let session = 0;
+  try { session = (parseInt(localStorage.getItem('bt_tests') || '0', 10) || 0) + M; localStorage.setItem('bt_tests', String(session)); } catch (e) { session = M; }
+  const mc = el('div', 'multi-comp');
+  mc.innerHTML = `⚠ <b>다중비교 주의</b> — 이번 실행에서 ${M}개 종목을 동시 검정했고, 이 브라우저에서 누적 <b>${session}회</b> 테스트했습니다.
+    후보를 많이 돌릴수록 <b>우연히 QUANT가 나올 확률</b>이 커집니다. 아래 각 종목의 <b>OOS·랜덤대조·신뢰구간</b>으로 우연 여부를 판별하세요.`;
+  body.appendChild(mc);
+
   const turn = rows.find((r) => r.strat)?.strat?.costModel?.turnCost ?? 0.0005;
-  const prov = el('div', 'provenance', `데이터: Yahoo 조정종가 <b>(net-of-fee)</b> · 비용: 거래 왕복 ${(turn * 10000).toFixed(0)}bps · 신호 T+1 집행 · 판정: 매수후보유 대비 칼마(±10% PUSH)`);
+  const prov = el('div', 'provenance',
+    `데이터: Yahoo 조정종가 <b>(배당·분할 반영 net-of-fee)</b> · 비용: 거래 왕복 ${(turn * 10000).toFixed(0)}bps(고정 — 레버리지 ETF 실제 스프레드/슬리피지는 더 클 수 있음) · 신호 T+1 · 판정: 매수후보유 대비 칼마` +
+    `<br>⚠ <b>생존 편향</b>: 지금 보이는 건 <u>살아남은 종목</u>뿐입니다. 청산된 3배 ETF 다수는 표본에 없어 결과가 낙관적으로 치우칠 수 있습니다.`);
   body.appendChild(prov);
 
-  // 수치 표(펼치기)
+  // 런카드(재현 산출물)
+  const rc = res.runCard;
+  const runcard = el('details', 'runcard');
+  runcard.innerHTML = `<summary>런카드 (재현용 산출물) · ${rc.version}</summary>
+    <div class="rc-body">
+      <div>버전: <code>${rc.version}</code></div>
+      <div>실행 시각(UTC): <code>${rc.ranAt}</code></div>
+      <div>데이터: ${rc.dataSource}</div>
+      <div>비용 모델: 거래 ${(rc.costModel.turnCost * 10000).toFixed(0)}bps · 운용보수 ${rc.costModel.expenseRatio === 0 ? '가격 반영(0 추가)' : rc.costModel.expenseRatio}</div>
+      <div>통계: 부트스트랩 ${rc.iters.bootstrap}회(블록20) · 랜덤대조 ${rc.iters.control}회 · OOS train ${Math.round(rc.iters.oosTrainFrac * 100)}%</div>
+      <div>집행: ${rc.execution}</div>
+      <div class="rc-note">동일 입력 → 동일 결과(시드 고정). 위 스펙 JSON은 해석 확인 단계에서 복사·저장할 수 있습니다.</div>
+    </div>`;
+  body.appendChild(runcard);
+
+  // 수치 상세(펼치기)
   const details = el('div', 'details-section');
-  const btn = el('button', 'btn ghost', '수치 상세 펼치기 ▾');
+  const btn = el('button', 'btn ghost', '종목별 통계 상세 펼치기 ▾');
   const dc = el('div', 'details hidden');
   rows.forEach((r) => dc.appendChild(simpleCard(r)));
-  btn.onclick = () => { dc.classList.toggle('hidden'); btn.textContent = dc.classList.contains('hidden') ? '수치 상세 펼치기 ▾' : '접기 ▴'; };
+  btn.onclick = () => { dc.classList.toggle('hidden'); btn.textContent = dc.classList.contains('hidden') ? '종목별 통계 상세 펼치기 ▾' : '접기 ▴'; };
   details.appendChild(btn); details.appendChild(dc);
   body.appendChild(details);
 
   animateBoard(board);
 }
 
-// 3-state 판정: 칼마 ±10%는 PUSH(근소차), 위/아래는 QUANT/NOT-QUANT.
-function verdictOf(r) {
-  if (r.error) return { tag: 'NO-DATA', cls: 'c-err', state: 'err' };
-  const bh = r.bh.calmar, st = r.strat.calmar;
-  const denom = Math.abs(bh) > 1e-9 ? Math.abs(bh) : 1;
-  const rel = (st - bh) / denom;
-  if (Math.abs(rel) <= 0.10) return { tag: 'PUSH', cls: 'c-push', state: 'push' };
-  return st > bh ? { tag: 'QUANT', cls: 'c-quant', state: 'quant' } : { tag: 'NOT-QUANT', cls: 'c-cut', state: 'cut' };
-}
+const CHK = (ok) => ok ? '<span class="chk y">✓</span>' : '<span class="chk n">✗</span>';
 
 function simpleCard(r) {
   const card = el('div', 'ticker-card');
@@ -259,17 +279,40 @@ function simpleCard(r) {
     card.innerHTML = `<div class="tc-head"><span class="sym">${r.ticker}</span><span class="idx-name">${r.name || ''}</span><span class="verdict-tag fail">${r.error}</span></div>`;
     return card;
   }
-  const v = verdictOf(r);
-  const tagCls = v.state === 'quant' ? 'pass' : v.state === 'push' ? 'pushtag' : 'fail';
-  const dCalmar = (r.strat.calmar - r.bh.calmar);
+  const tagCls = r.verdict.state === 'quant' ? 'pass' : (r.verdict.state === 'cut' ? 'fail' : 'pushtag');
+  const ci = r.calmarCI, ctrl = r.control, k = r.checks;
+  const ciTxt = ci ? `${ci.lo.toFixed(2)} ~ ${ci.hi.toFixed(2)} (중앙 ${ci.med.toFixed(2)})` : '—';
+  const pctTxt = ctrl ? `상위 ${((1 - ctrl.percentile) * 100).toFixed(0)}% (랜덤 ${(ctrl.percentile * 100).toFixed(0)}% 초과)` : '—';
   card.innerHTML = `
     <div class="tc-head">
       <span class="sym">${r.ticker}</span><span class="idx-name">${r.name || ''}</span>
-      <span class="verdict-tag ${tagCls}">${v.tag}</span>
+      <span class="verdict-tag ${tagCls}">${r.verdict.label}</span>
     </div>
     <div class="tc-body open">
-      ${metricsTable(metricRow('전략', r.strat, 'strat', r.bh) + metricRow('매수후보유', r.bh, 'bh', null))}
-      <div style="color:var(--faint);font-size:10.5px;margin-top:6px">칼마 차이 ${dCalmar >= 0 ? '+' : ''}${dCalmar.toFixed(2)} · ${r.strat.from} → ${r.strat.to} · ${r.strat.bars}봉 · 노출 ${fmtPct(r.strat.exposure)}</div>
+      ${metricsTable(metricRow('전략(전체)', r.strat, 'strat', r.bh) + metricRow('매수후보유', r.bh, 'bh', null))}
+      <div class="stat-grid">
+        <div class="stat-box">
+          <div class="sb-t">표본 외(OOS) — 뒤 40% 검증 · 분리 ${r.oos.split}</div>
+          <div class="sb-row"><span>전략 칼마</span><b class="${r.oos.test.strat.calmar > r.oos.test.bh.calmar ? 'win' : 'lose'}">${fmtR(r.oos.test.strat.calmar)}</b> <span class="vs">vs B&H ${fmtR(r.oos.test.bh.calmar)}</span></div>
+          <div class="sb-hint">과거(train)가 아니라 <b>보지 않은 뒷구간</b>에서도 우위인가</div>
+        </div>
+        <div class="stat-box">
+          <div class="sb-t">칼마 90% 신뢰구간 (블록 부트스트랩)</div>
+          <div class="sb-row"><b>${ciTxt}</b></div>
+          <div class="sb-hint">"칼마 ${fmtR(r.strat.calmar)}"가 단일 경로의 운인지 — 재배열 시 이 범위</div>
+        </div>
+        <div class="stat-box">
+          <div class="sb-t">랜덤 대조 (타이밍 셔플 ${''}200회)</div>
+          <div class="sb-row"><b>${pctTxt}</b></div>
+          <div class="sb-hint">같은 보유량·회전을 무작위로 배치했을 때 대비 — 타이밍이 우연 이상인가</div>
+        </div>
+        <div class="stat-box">
+          <div class="sb-t">확증 (${k.corrob}/3)</div>
+          <div class="sb-checks">${CHK(k.baseBeat)} 베이스 우위 · ${CHK(k.oosBeat)} OOS 유지 · ${CHK(k.vsRandom)} 랜덤 초과 · ${CHK(k.ciPositive)} CI 양수</div>
+          <div class="sb-hint">${r.verdict.state === 'weak' ? '베이스만 이기고 확증이 부족 → 확언 못 함(QUANT?)' : r.verdict.state === 'quant' ? '다차원 확증 충족' : r.verdict.state === 'push' ? '매수후보유와 근소차' : '베이스 미달'}</div>
+        </div>
+      </div>
+      <div style="color:var(--faint);font-size:10.5px;margin-top:8px">${r.strat.from} → ${r.strat.to} · ${r.strat.bars}봉 · 노출 ${fmtPct(r.strat.exposure)}</div>
     </div>`;
   return card;
 }

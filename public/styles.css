@@ -94,8 +94,33 @@ header.masthead { padding: 44px 0 24px; }
 .jsonnote { display: block; color: var(--faint); font-size: 11px; margin-top: 8px; line-height: 1.5; }
 
 /* 데이터 출처·비용 */
-.provenance { margin-top: 12px; font-size: 11.5px; color: var(--faint); line-height: 1.6; }
+.provenance { margin-top: 12px; font-size: 11.5px; color: var(--faint); line-height: 1.7; }
 .provenance b { color: var(--dim); }
+.provenance u { text-decoration-color: var(--warn); }
+
+/* 다중비교 경고 */
+.multi-comp { margin-top: 14px; background: rgba(255,206,107,.07); border: 1px solid rgba(255,206,107,.35); border-radius: 6px; padding: 11px 14px; font-size: 12px; line-height: 1.6; color: var(--dim); }
+.multi-comp b { color: var(--warn); }
+
+/* 런카드 */
+.runcard { margin-top: 12px; border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px; }
+.runcard summary { cursor: pointer; font-family: var(--sans); font-weight: 700; font-size: 12px; color: var(--dim); }
+.runcard .rc-body { margin-top: 10px; font-size: 12px; color: var(--dim); line-height: 1.8; }
+.runcard .rc-body code { color: var(--blue-lit); background: var(--panel2); padding: 1px 5px; border-radius: 2px; }
+.runcard .rc-note { margin-top: 6px; color: var(--faint); font-size: 11px; }
+
+/* 종목 통계 상세 */
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-top: 12px; }
+.stat-box { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
+.stat-box .sb-t { font-family: var(--sans); font-weight: 700; font-size: 10.5px; letter-spacing: .04em; color: var(--dim); margin-bottom: 6px; }
+.stat-box .sb-row { font-size: 15px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.stat-box .sb-row .vs { font-size: 11px; color: var(--faint); }
+.stat-box .sb-hint { font-size: 10.5px; color: var(--faint); margin-top: 5px; line-height: 1.5; }
+.stat-box .sb-checks { font-size: 11.5px; color: var(--dim); line-height: 1.7; }
+.chk { font-weight: 700; }
+.chk.y { color: var(--pass); }
+.chk.n { color: var(--red); }
+:root { --pass: #55d6a0; }
 
 /* PUSH(근소) 판정 색 */
 .seg.c-push .cell.lit { --cellcolor: var(--warn); }

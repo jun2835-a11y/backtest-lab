@@ -10,6 +10,9 @@ import { TICKERS, UNIVERSE, REGIMES, getFree } from './src/data.js';
 import { STRATEGY_TYPES, normalizeSpec, positionsFor, gridFor } from './src/strategy.js';
 import { runBacktest, buyHold } from './src/backtest.js';
 import { PASS_RULES } from './src/protocol.js';
+import { mulberry32, hashStr, bootstrapCalmarCI, timingShuffleControl, oosSplitIndex, equityToReturns } from './src/stats.js';
+
+const APP_VERSION = 'backtest-lab 0.2.0';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -81,23 +84,70 @@ app.post('/api/simple', async (req, res) => {
     const to = body.to || new Date().toISOString().slice(0, 10);
     const from = body.from || `${new Date().getUTCFullYear() - 10}-01-01`;
 
+    const BOOT = 300, CONTROL = 200;
     const rows = [];
     for (const t of tickers) {
       try {
         const { name, bars } = await getFree(t, from, to);
-        if (!bars || bars.length < 40) { rows.push({ ticker: t, name, error: '데이터 부족(상장 이력이 짧거나 없음)' }); continue; }
+        if (!bars || bars.length < 120) { rows.push({ ticker: t, name, error: '데이터 부족(통계 검정에 최소 ~120봉 필요)' }); continue; }
         const closes = bars.map((b) => b.close);
         const pos = positionsFor(spec, closes, chosen);
-        const strat = runBacktest(bars, pos).metrics;
+        const run = runBacktest(bars, pos);
+        const strat = run.metrics;
         const bh = buyHold(bars).metrics;
-        const pass = strat.calmar > bh.calmar;
-        rows.push({ ticker: t, name, pass, strat, bh });
+
+        // 재현성: 종목+스펙+기간으로 시드 고정.
+        const rng = mulberry32(hashStr(`${t}|${JSON.stringify(spec)}|${from}|${to}`));
+
+        // OOS 분리: 앞 60% train, 뒤 40% test (같은 포지션 규칙, 룩어헤드 없음).
+        const k = oosSplitIndex(bars.length, 0.6);
+        const trainStrat = runBacktest(bars.slice(0, k), pos.slice(0, k)).metrics;
+        const trainBH = buyHold(bars.slice(0, k)).metrics;
+        const testStrat = runBacktest(bars.slice(k), pos.slice(k)).metrics;
+        const testBH = buyHold(bars.slice(k)).metrics;
+
+        // 블록 부트스트랩 칼마 신뢰구간.
+        const calmarCI = bootstrapCalmarCI(equityToReturns(run.equity), { block: 20, iters: BOOT, rng });
+        // 타이밍 셔플 랜덤대조.
+        const control = timingShuffleControl(bars, pos, strat.calmar, { iters: CONTROL, rng });
+
+        // 다차원 신뢰: 베이스 우위 + (OOS 유지 / 랜덤 초과 / CI 양수) 확증 수.
+        const baseBeat = strat.calmar > bh.calmar;
+        const oosBeat = testStrat.calmar > testBH.calmar;
+        const vsRandom = control ? control.percentile >= 0.90 : false;
+        const ciPositive = calmarCI ? calmarCI.lo > 0 : false;
+        const corrob = [oosBeat, vsRandom, ciPositive].filter(Boolean).length;
+        const denom = Math.abs(bh.calmar) > 1e-9 ? Math.abs(bh.calmar) : 1;
+        const nearTie = Math.abs((strat.calmar - bh.calmar) / denom) <= 0.10;
+
+        let state, label2;
+        if (!baseBeat) { state = 'cut'; label2 = 'NOT-QUANT'; }
+        else if (nearTie) { state = 'push'; label2 = 'PUSH'; }
+        else if (corrob >= 2) { state = 'quant'; label2 = 'QUANT'; }
+        else { state = 'weak'; label2 = 'QUANT?'; } // 베이스만 이기고 확증 부족
+
+        rows.push({
+          ticker: t, name, strat, bh,
+          verdict: { state, label: label2 },
+          oos: { split: bars[k].iso, train: { strat: trainStrat, bh: trainBH }, test: { strat: testStrat, bh: testBH } },
+          calmarCI, control,
+          checks: { baseBeat, oosBeat, vsRandom, ciPositive, corrob },
+        });
       } catch (e) {
         rows.push({ ticker: t, error: String(e.message || e).slice(0, 100) });
       }
     }
-    const quant = rows.filter((r) => r.pass).length;
-    res.json({ ok: true, result: { rows, summary: { quant, total: rows.length }, spec: { type: spec.type, label, chosenParam: chosen }, from, to } });
+    const counts = { quant: 0, weak: 0, push: 0, cut: 0 };
+    rows.forEach((r) => { if (r.verdict) counts[r.verdict.state]++; });
+    const runCard = {
+      version: APP_VERSION,
+      ranAt: new Date().toISOString(),
+      dataSource: 'Yahoo Finance 조정종가(net-of-fee)',
+      costModel: { turnCost: 0.0005, expenseRatio: 0 },
+      iters: { bootstrap: BOOT, control: CONTROL, oosTrainFrac: 0.6 },
+      execution: 'T+1 · 100% 또는 현금',
+    };
+    res.json({ ok: true, result: { rows, summary: { counts, total: rows.length }, spec: { type: spec.type, label, chosenParam: chosen }, from, to, runCard } });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: String(e.message || e) });
