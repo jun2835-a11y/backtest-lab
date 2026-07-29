@@ -1,0 +1,20 @@
+{
+  "name": "backtest-lab",
+  "version": "0.1.0",
+  "description": "자연어 백테스트 검증 랩 — 사전등록·이중관문·평원·다종목(TQQQ/SOXL/UPRO/TNA/LABU)",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node test/protocol.test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.68.0",
+    "express": "^4.21.2"
+  },
+  "license": "MIT"
+}
