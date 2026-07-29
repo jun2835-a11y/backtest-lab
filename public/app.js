@@ -187,27 +187,116 @@ $('#btn-run').onclick = async () => {
   }
 };
 
-// ── 결과 렌더 ──
+// ── 결과 렌더: 항공편 출발 안내판(스플릿플랩) ──
+const FLAP_CHARSET = ' ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:-/.';
+
+// 한 글자 셀을 목표 글자까지 촤라락 넘긴 뒤 착지.
+function flapCell(cell, target, delay, extraFlips) {
+  const glyph = cell.querySelector('.glyph');
+  target = (target || ' ').toUpperCase();
+  if (!FLAP_CHARSET.includes(target)) target = ' ';
+  if (target === ' ') { glyph.textContent = ' '; return; } // 공백은 넘김 없이 비움
+  const flips = 8 + extraFlips;
+  let step = 0, cur = 0;
+  setTimeout(() => {
+    const iv = setInterval(() => {
+      cur = (cur + 1) % FLAP_CHARSET.length;
+      glyph.textContent = FLAP_CHARSET[cur];
+      cell.animate(
+        [{ transform: 'rotateX(-88deg)', filter: 'brightness(1.6)' }, { transform: 'rotateX(0deg)', filter: 'brightness(1)' }],
+        { duration: 90, easing: 'cubic-bezier(.3,.7,.3,1)' });
+      if (++step >= flips) {
+        clearInterval(iv);
+        glyph.textContent = target;
+        cell.classList.add('lit');
+        cell.animate([{ transform: 'rotateX(-88deg)' }, { transform: 'rotateX(0deg)' }], { duration: 110, easing: 'ease-out' });
+      }
+    }, 42);
+  }, delay);
+}
+
+// 세그먼트(글자열) → 셀 DOM 배열. cls로 색 상태 지정.
+function buildSeg(text, cls, width) {
+  const seg = el('div', 'seg ' + (cls || ''));
+  const s = (text || '').toUpperCase();
+  const w = width || s.length;
+  for (let i = 0; i < w; i++) {
+    const ch = s[i] || ' ';
+    const cell = el('div', 'cell');
+    cell.innerHTML = '<span class="dots-off"></span><span class="glyph"> </span>';
+    cell.dataset.target = ch;
+    seg.appendChild(cell);
+  }
+  return seg;
+}
+
+function boardRow(leftText, leftCls, rightText, rightCls, extraCls) {
+  const row = el('div', 'brow ' + (extraCls || ''));
+  row.appendChild(buildSeg(leftText, leftCls, 6));
+  row.appendChild(buildSeg(rightText, rightCls, 11));
+  return row;
+}
+
 function renderResult(res) {
   const body = $('#result-body');
   body.innerHTML = '';
-  const v = res.verdict;
-  const adopt = v.decision === '채택';
+  const adopt = res.verdict.decision === '채택';
 
-  const banner = el('div', 'verdict ' + (adopt ? 'adopt' : 'reject'));
-  banner.innerHTML = `
-    <div class="decision">${v.decision}</div>
-    <div class="vmeta">
-      <div class="tally">이중 관문 통과 <b>${res.multiTicker.count} / ${res.universe.length}</b> · 기준 ${res.multiTicker.threshold} 이상
-        ${res.multiTicker.passing.length ? `— 통과: ${res.multiTicker.passing.join(', ')}` : ''}</div>
-      <ul>${[...v.reasons, ...(v.failReasons || [])].map((x) => `<li>${x}</li>`).join('')}
-        ${v.retrial && v.retrial.length ? `<li style="color:var(--warn)">재심: ${v.retrial.join(' ')}</li>` : ''}
-      </ul>
-      <div style="color:var(--faint);font-size:11px;margin-top:8px">${v.principleNote}</div>
-    </div>`;
-  body.appendChild(banner);
+  // 안내판
+  const board = el('div', 'board');
+  const s = SEALED.strategy;
+  const stratLabel = `${(s.maType || 'sma').toUpperCase()}${s.chosenParam ?? ''} · 이중관문·평원 · ${res.multiTicker.threshold}/${res.universe.length}`;
+  board.innerHTML = `
+    <div class="board-caption"><span class="eyebrow">BACKTEST · DEPARTURES</span><span class="strat">${stratLabel}</span></div>
+    <div class="board-cols"><div>Ticker</div><div>Verdict</div></div>
+    <div class="board-rows"></div>`;
+  const rows = board.querySelector('.board-rows');
 
-  res.perTicker.forEach((pt) => body.appendChild(tickerCard(pt)));
+  res.perTicker.forEach((pt) => {
+    if (pt.error) { rows.appendChild(boardRow(pt.ticker, 'c-sym', 'ERROR', 'c-err')); return; }
+    const pass = pt.tickerPass;
+    rows.appendChild(boardRow(pt.ticker, 'c-sym', pass ? 'QUANT' : 'NOT-QUANT', pass ? 'c-quant' : 'c-cut'));
+  });
+
+  // 최종 판정 하이라이트 행 (이미지의 파란 행)
+  const finalRow = boardRow('FINAL', 'c-final', adopt ? 'QUANT' : 'NOT-QUANT', adopt ? 'c-quant' : 'c-cut', 'final ' + (adopt ? 'blue' : 'redrow'));
+  rows.appendChild(finalRow);
+  body.appendChild(board);
+
+  // 판정 요약(비-도트, 안내판 아래)
+  const tally = el('div', 'tally-line');
+  tally.innerHTML = `기준 통과 <b>${res.multiTicker.count} / ${res.universe.length}</b> (요구 ${res.multiTicker.threshold}) ·
+    최종 <b class="${adopt ? 'q' : 'nq'}">${adopt ? 'QUANT (채택)' : 'NOT-QUANT (기각)'}</b>
+    <span class="pnote">${res.verdict.principleNote}</span>`;
+  body.appendChild(tally);
+
+  // 상세 게이트 리포트(펼치기)
+  const details = el('div', 'details-section');
+  const btn = el('button', 'btn ghost', '상세 게이트 리포트 펼치기 ▾');
+  const dc = el('div', 'details hidden');
+  res.perTicker.forEach((pt) => dc.appendChild(tickerCard(pt)));
+  const reasons = el('div', 'reasons');
+  reasons.innerHTML = `<ul>${[...res.verdict.reasons, ...(res.verdict.failReasons || [])].map((x) => `<li>${x}</li>`).join('')}
+    ${res.verdict.retrial?.length ? `<li class="retrial">재심: ${res.verdict.retrial.join(' ')}</li>` : ''}</ul>`;
+  dc.insertBefore(reasons, dc.firstChild);
+  btn.onclick = () => { dc.classList.toggle('hidden'); btn.textContent = dc.classList.contains('hidden') ? '상세 게이트 리포트 펼치기 ▾' : '접기 ▴'; };
+  details.appendChild(btn); details.appendChild(dc);
+  body.appendChild(details);
+
+  // 촤라락 애니메이션 — 좌→우, 위→행 웨이브
+  animateBoard(board);
+}
+
+function animateBoard(board) {
+  const rowsEls = [...board.querySelectorAll('.brow')];
+  rowsEls.forEach((row, ri) => {
+    const cells = [...row.querySelectorAll('.cell')];
+    cells.forEach((cell, ci) => {
+      const delay = ri * 90 + ci * 55 + Math.floor(Math.random() * 40);
+      const extra = ci + (row.classList.contains('final') ? 10 : 0);
+      flapCell(cell, cell.dataset.target, delay, extra);
+    });
+  });
 }
 
 function metricRow(name, m, cls, bh) {

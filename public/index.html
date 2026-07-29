@@ -3,25 +3,27 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>백테스트 검증 랩 · 사전등록·이중관문·평원</title>
+  <title>백테스트 검증 · Departures</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;1,9..144,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Roboto+Mono:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <div class="wrap">
 
     <header class="masthead">
-      <div class="brand">
-        <div class="eyebrow">Backtest Validation Lab · 레버리지 ETF</div>
-        <h1>백테스트 <em>검증 콘솔</em></h1>
-        <p>자연어로 전략을 던지면 — <b>사전등록 → 이중 관문 → 평원 → 다종목 → 판정</b>의
-           채택/기각 프로토콜로 돌립니다. 돌린 뒤 기준을 바꾸면 그게 과적합.</p>
+      <div class="mast-top">
+        <div class="plane-badge">
+          <svg viewBox="0 0 24 24"><path d="M21 16v-2l-8-5V3.5A1.5 1.5 0 0 0 11.5 2 1.5 1.5 0 0 0 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5z"/></svg>
+        </div>
+        <h1>Departures</h1>
       </div>
+      <p class="mast-sub">자연어로 전략을 던지면 — <b>사전등록 → 이중 관문 → 평원 → 다종목</b> 검증을 거쳐
+        각 종목이 기준을 넘는지, 그리고 최종 판정 <b>QUANT / NOT-QUANT</b>를 출발 안내판처럼 촤라락 띄웁니다.</p>
       <div class="status-chips">
         <span class="chip" id="chip-llm"><span class="dot"></span><span>파서 확인중…</span></span>
-        <span class="chip on"><span class="dot"></span>데이터 · Yahoo (실+3배합성)</span>
+        <span class="chip on"><span class="dot"></span>DATA · YAHOO (실 + 3배합성)</span>
       </div>
     </header>
 
@@ -30,7 +32,7 @@
       <div class="step" data-step="1"><div class="n">02</div><div class="t">사전등록 잠금</div></div>
       <div class="step" data-step="2"><div class="n">03</div><div class="t">이중 관문</div></div>
       <div class="step" data-step="3"><div class="n">04</div><div class="t">평원</div></div>
-      <div class="step" data-step="4"><div class="n">05</div><div class="t">다종목 판정</div></div>
+      <div class="step" data-step="4"><div class="n">05</div><div class="t">판정 · 안내판</div></div>
     </div>
 
     <!-- 1. 요청 -->
@@ -51,29 +53,30 @@
       <p class="hint">돌리기 전 여기서 그리드·통과선·평원 임계·과반을 잠급니다. 잠근 뒤 값이 바뀌면 과적합으로 경고합니다.</p>
       <fieldset id="prereg-form">
         <div class="prereg-grid" id="prereg-grid"></div>
-        <div class="field" style="margin-bottom:18px">
+        <div class="field" style="margin-bottom:16px">
           <label>대상 종목 (다종목 확장)</label>
           <div class="ticker-toggles" id="ticker-toggles"></div>
         </div>
       </fieldset>
       <div class="btn-row">
         <button class="btn seal" id="btn-lock">🔒 사전등록 잠금</button>
-        <button class="btn primary hidden" id="btn-run">▶ 프로토콜 돌리기</button>
+        <button class="btn primary hidden" id="btn-run">▶ 안내판 띄우기</button>
         <button class="btn hidden" id="btn-unlock">잠금 해제(재등록)</button>
       </div>
       <div class="locked-notice" id="overfit-notice">⚠ 사전등록 이후 기준을 변경했습니다. 이건 과적합입니다 — 재등록으로 새 봉인을 찍거나 원값으로 되돌리세요.</div>
     </section>
 
-    <!-- 3. 결과 -->
+    <!-- 3. 결과 안내판 -->
     <section class="panel hidden" id="p-result">
-      <h2><span class="idx">03</span> 판정 리포트</h2>
+      <h2><span class="idx">03</span> 판정 · 출발 안내판</h2>
       <div id="result-body"></div>
     </section>
 
     <footer class="foot">
       <div>데이터: Yahoo Finance 조정종가. 관문② "잃어버린 10년"은 기초지수(<code>^NDX ^SOX ^GSPC ^RUT ^NBI</code>)에
-        3배 일간복리 + 운용보수·차입비용 드래그를 적용한 <b>합성 시계열</b>입니다 — 실 ETF가 존재하지 않던 2000~2010 구간 근사치.</div>
-      <div style="margin-top:6px">판정원칙: 칼마 10% 내 차이면 수익 우선 · 동급이면 단순한 쪽 · 사전확률에 비례한 회의. 백테스트는 미래 수익을 보장하지 않습니다.</div>
+        3배 일간복리 + 운용보수·차입비용 드래그를 적용한 <b>합성 시계열</b> — 실 ETF가 없던 2000~2010 근사치.</div>
+      <div style="margin-top:6px">판정: <b>QUANT</b>=이중관문·평원 통과 종목이 과반 기준 이상 → 채택. <b>NOT-QUANT</b>=기각.
+        칼마 10% 내면 수익 우선 · 동급이면 단순한 쪽. 백테스트는 미래 수익을 보장하지 않습니다.</div>
     </footer>
 
   </div>
