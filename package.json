@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node test/protocol.test.mjs"
+    "test": "node test/protocol.test.mjs && node test/strategy.test.mjs"
   },
   "engines": {
     "node": ">=20"

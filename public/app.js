@@ -45,9 +45,28 @@ function initSimpleMode() {
     };
   });
 
-  // 전략은 자연어 입력만 사용 (드롭다운 제거) — 실행 시 해석→백테스트
+  // 전략은 자연어 입력만 사용 — 해석 → 확인 → 실행
   $('#s-run').onclick = runSimple;
+  $('#s-confirm-run').onclick = () => {
+    if (!PENDING) return;
+    $('#s-confirm-panel').classList.add('hidden');
+    saveSpec(PENDING);
+    runWith(PENDING.tickers, PENDING.strategy, PENDING.from, PENDING.to);
+  };
+  $('#s-confirm-cancel').onclick = () => $('#s-confirm-panel').classList.add('hidden');
+
+  // 지난 스펙 재실행(재현성): LLM 재해석 없이 저장된 JSON 그대로.
+  const saved = loadSpec();
+  if (saved) {
+    const b = $('#s-rerun');
+    b.classList.remove('hidden');
+    b.onclick = () => { PENDING = saved; runWith(saved.tickers, saved.strategy, saved.from, saved.to); };
+  }
 }
+
+// ── 스펙 저장/로드(재현성) ──
+function saveSpec(p) { try { localStorage.setItem('bt_last_spec', JSON.stringify(p)); } catch (e) {} }
+function loadSpec() { try { return JSON.parse(localStorage.getItem('bt_last_spec')); } catch (e) { return null; } }
 
 // 기간 프리셋 → from/to
 function periodRange() {
@@ -73,27 +92,95 @@ async function parseNL(nl) {
   return r.spec;
 }
 
+let PENDING = null; // 해석 확인 대기 스펙
+
+// 해석 → 확인 단계(실행 전 승인)
 async function runSimple() {
   const nl = $('#s-nl').value.trim();
   if (!nl) { $('#s-status').innerHTML = '<span class="err">전략을 자연어로 입력하세요.</span>'; return; }
+  const typed = $('#s-tickers').value.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
   const { from, to } = periodRange();
-  const body = $('#s-result-body');
-  $('#s-result-panel').classList.remove('hidden');
-  $('#s-result-panel').classList.add('reveal');
-  body.innerHTML = '<div class="loading"><span class="spinner"></span>전략 해석 중…</div>';
+  $('#s-status').innerHTML = '<span class="loading"><span class="spinner"></span>전략 해석 중…</span>';
+  let spec;
+  try { spec = await parseNL(nl); } catch (e) { $('#s-status').innerHTML = `<span class="err">해석 오류: ${e.message}</span>`; return; }
   $('#s-status').innerHTML = '';
-  $('#s-result-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
-  let strategy;
-  try {
-    const spec = await parseNL(nl);   // 자연어 → 전략 스펙
-    strategy = spec.strategy;
-  } catch (e) {
-    body.innerHTML = `<div class="err">해석 오류: ${e.message}</div>`;
-    return;
+  const tk = $('#s-tickers').value.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
+  const tickers = tk.length ? tk : typed;
+  if (!tickers.length) { $('#s-status').innerHTML = '<span class="err">종목을 입력하세요. (또는 문장에 종목 포함)</span>'; return; }
+  PENDING = { strategy: spec.strategy, tickers, from, to, notes: spec.notes, engine: spec.engine, downgraded: spec.downgraded, downgradeNote: spec.downgradeNote };
+  renderConfirm(PENDING);
+}
+
+// ── 스펙을 사람이 읽는 말로 ──
+const OP_KO = { '>': '초과', '<': '미만', '>=': '이상', '<=': '이하', '==': '같음', 'cross_up': '상향돌파', 'cross_down': '하향돌파' };
+function descOperand(op) {
+  if (typeof op === 'number') return String(op);
+  if (op == null) return '?';
+  if (op.const != null) return String(op.const);
+  const p = op.period || op.p;
+  switch ((op.ind || op.indicator || 'price').toLowerCase()) {
+    case 'price': case 'close': return '종가';
+    case 'sma': return `${p || 50}일 이동평균`;
+    case 'ema': return `${p || 50}일 지수이평`;
+    case 'rsi': return `RSI(${p || 14})`;
+    case 'roc': case 'momentum': return `${p || 20}일 모멘텀`;
+    case 'vol': case 'volatility': return `${p || 20}일 변동성`;
+    case 'high': return `${p || 20}일 최고`;
+    case 'low': return `${p || 20}일 최저`;
+    case 'macd': return `MACD ${op.line || 'line'}`;
+    case 'bb': case 'bollinger': return `볼린저 ${op.band || 'mid'}(${p || 20},${op.mult || 2})`;
+    default: return '종가';
   }
-  const tickers = $('#s-tickers').value.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
-  if (!tickers.length) { body.innerHTML = '<div class="err">종목을 입력하세요. (또는 전략 문장에 종목을 포함)</div>'; return; }
-  await runWith(tickers, strategy, from, to);
+}
+function descCond(c) {
+  if (!c || typeof c !== 'object') return '?';
+  if (Array.isArray(c.all)) return '(' + c.all.map(descCond).join(' 그리고 ') + ')';
+  if (Array.isArray(c.any)) return '(' + c.any.map(descCond).join(' 또는 ') + ')';
+  if (c.not) return 'NOT ' + descCond(c.not);
+  if (c.op) return `${descOperand(c.left)} ${OP_KO[c.op] || c.op} ${descOperand(c.right)}`;
+  return '?';
+}
+function descStrategy(s) {
+  if (s.type === 'ma_timing') return `종가가 <b>${s.chosenParam}일 ${(s.maType || 'sma').toUpperCase()}</b> 위일 때 100% 보유, 아래면 현금`;
+  if (s.type === 'dual_ma') return `<b>${s.fast || 50}일 MA</b>가 <b>${s.chosenParam}일 MA</b> 위일 때 보유, 아니면 현금`;
+  if (s.type === 'vol_target') return `<b>${s.window || 20}일 변동성</b>이 <b>${s.chosenParam}</b> 미만일 때 보유, 아니면 현금`;
+  if (s.type === 'rule') {
+    if (s.entry || s.exit) return `진입: <b>${descCond(s.entry)}</b> → 청산: <b>${descCond(s.exit)}</b> (사이 구간 보유)`;
+    return `<b>${descCond(s.long || s.rule || s.condition)}</b> 인 구간만 보유, 아니면 현금`;
+  }
+  return JSON.stringify(s);
+}
+
+function renderConfirm(p) {
+  $('#s-result-panel').classList.add('hidden');
+  const panel = $('#s-confirm-panel');
+  panel.classList.remove('hidden');
+  const dg = p.downgraded ? `<div class="downgrade-banner">⚠ ${p.downgradeNote || '요청을 해석하지 못해 기본 전략으로 대체했습니다.'}</div>` : '';
+  const engineTag = p.engine === 'llm' ? 'Claude 해석' : '키워드 폴백';
+  $('#s-confirm-body').innerHTML = `
+    ${dg}
+    <div class="spec-line"><span class="k">종목</span><span class="v">${p.tickers.join(', ')}</span></div>
+    <div class="spec-line"><span class="k">기간</span><span class="v">${p.from} ~ ${p.to}</span></div>
+    <div class="spec-line"><span class="k">전략</span><span class="v">${descStrategy(p.strategy)}</span></div>
+    <div class="assump">
+      <div class="assump-t">고정 가정 (모두 명시)</div>
+      <ul>
+        <li>포지션: 100% 보유 또는 현금 (부분·분할 없음)</li>
+        <li>익절·손절: 없음</li>
+        <li>집행: 신호 다음 봉(T+1)</li>
+        <li>비용: 거래 왕복 5bps</li>
+        <li>데이터: Yahoo 조정종가 — 운용보수는 가격에 이미 반영(net-of-fee)</li>
+        <li>판정: 매수후보유 대비 칼마 (±10% 근소는 PUSH)</li>
+      </ul>
+    </div>
+    <details class="jsonwrap"><summary>확정 JSON 스펙 (재현용) · <span class="tag">${engineTag}</span></summary>
+      <pre id="spec-json">${JSON.stringify({ strategy: p.strategy, tickers: p.tickers, from: p.from, to: p.to }, null, 2)}</pre>
+      <button class="btn ghost" id="copy-json">JSON 복사</button>
+      <span class="jsonnote">자연어는 입구일 뿐, 저장된 이 JSON이 그대로 재실행됩니다(같은 문장도 LLM은 다르게 해석할 수 있어요).</span>
+    </details>`;
+  const cp = $('#copy-json');
+  if (cp) cp.onclick = () => { navigator.clipboard?.writeText($('#spec-json').textContent); cp.textContent = '복사됨 ✓'; };
+  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 async function runWith(tickers, strategy, from, to) {
@@ -128,12 +215,21 @@ function renderSimpleResult(res) {
     <div class="board-rows"></div>`;
   const rowsEl = board.querySelector('.board-rows');
 
+  let quant = 0, push = 0;
   rows.forEach((r) => {
-    if (r.error) { rowsEl.appendChild(boardRow(r.ticker, 'c-sym', 'NO-DATA', 'c-err', '', leftW, 11)); return; }
-    rowsEl.appendChild(boardRow(r.ticker, 'c-sym', r.pass ? 'QUANT' : 'NOT-QUANT', r.pass ? 'c-quant' : 'c-cut', '', leftW, 11));
+    const v = verdictOf(r);
+    if (v.state === 'quant') quant++; else if (v.state === 'push') push++;
+    rowsEl.appendChild(boardRow(r.ticker, 'c-sym', v.tag, v.cls, '', leftW, 11));
   });
-  rowsEl.appendChild(boardRow('TOTAL', 'c-final', `${res.summary.quant}/${res.summary.total} QUANT`, res.summary.quant ? 'c-quant' : 'c-cut', 'final ' + (res.summary.quant ? 'blue' : 'redrow'), leftW, 13));
+  const finalCls = quant ? 'c-quant' : (push ? 'c-push' : 'c-cut');
+  const finalRow = quant ? 'blue' : (push ? 'amberrow' : 'redrow');
+  rowsEl.appendChild(boardRow('TOTAL', 'c-final', `${quant} QUANT${push ? ' / ' + push + ' PUSH' : ''}`, finalCls, 'final ' + finalRow, leftW, 15));
   body.appendChild(board);
+
+  // 데이터 출처·비용 표기
+  const turn = rows.find((r) => r.strat)?.strat?.costModel?.turnCost ?? 0.0005;
+  const prov = el('div', 'provenance', `데이터: Yahoo 조정종가 <b>(net-of-fee)</b> · 비용: 거래 왕복 ${(turn * 10000).toFixed(0)}bps · 신호 T+1 집행 · 판정: 매수후보유 대비 칼마(±10% PUSH)`);
+  body.appendChild(prov);
 
   // 수치 표(펼치기)
   const details = el('div', 'details-section');
@@ -147,20 +243,33 @@ function renderSimpleResult(res) {
   animateBoard(board);
 }
 
+// 3-state 판정: 칼마 ±10%는 PUSH(근소차), 위/아래는 QUANT/NOT-QUANT.
+function verdictOf(r) {
+  if (r.error) return { tag: 'NO-DATA', cls: 'c-err', state: 'err' };
+  const bh = r.bh.calmar, st = r.strat.calmar;
+  const denom = Math.abs(bh) > 1e-9 ? Math.abs(bh) : 1;
+  const rel = (st - bh) / denom;
+  if (Math.abs(rel) <= 0.10) return { tag: 'PUSH', cls: 'c-push', state: 'push' };
+  return st > bh ? { tag: 'QUANT', cls: 'c-quant', state: 'quant' } : { tag: 'NOT-QUANT', cls: 'c-cut', state: 'cut' };
+}
+
 function simpleCard(r) {
   const card = el('div', 'ticker-card');
   if (r.error) {
     card.innerHTML = `<div class="tc-head"><span class="sym">${r.ticker}</span><span class="idx-name">${r.name || ''}</span><span class="verdict-tag fail">${r.error}</span></div>`;
     return card;
   }
+  const v = verdictOf(r);
+  const tagCls = v.state === 'quant' ? 'pass' : v.state === 'push' ? 'pushtag' : 'fail';
+  const dCalmar = (r.strat.calmar - r.bh.calmar);
   card.innerHTML = `
     <div class="tc-head">
       <span class="sym">${r.ticker}</span><span class="idx-name">${r.name || ''}</span>
-      <span class="verdict-tag ${r.pass ? 'pass' : 'fail'}">${r.pass ? 'QUANT' : 'NOT-QUANT'}</span>
+      <span class="verdict-tag ${tagCls}">${v.tag}</span>
     </div>
     <div class="tc-body open">
       ${metricsTable(metricRow('전략', r.strat, 'strat', r.bh) + metricRow('매수후보유', r.bh, 'bh', null))}
-      <div style="color:var(--faint);font-size:10.5px;margin-top:6px">${r.strat.from} → ${r.strat.to} · ${r.strat.bars}봉 · 노출 ${fmtPct(r.strat.exposure)}</div>
+      <div style="color:var(--faint);font-size:10.5px;margin-top:6px">칼마 차이 ${dCalmar >= 0 ? '+' : ''}${dCalmar.toFixed(2)} · ${r.strat.from} → ${r.strat.to} · ${r.strat.bars}봉 · 노출 ${fmtPct(r.strat.exposure)}</div>
     </div>`;
   return card;
 }
@@ -187,6 +296,13 @@ $('#btn-parse').onclick = async () => {
     SPEC = r.spec;
     $('#parse-status').innerHTML = `<span style="color:var(--muted);font-size:12px">해석됨 · ${r.spec.engine === 'llm' ? 'Claude' : '폴백'} — ${r.spec.notes || ''}</span>`;
     renderPrereg(SPEC);
+    // 침묵 강등 경고
+    const oldB = $('#pro-downgrade'); if (oldB) oldB.remove();
+    if (r.spec.downgraded) {
+      const b = el('div', 'downgrade-banner', `⚠ ${r.spec.downgradeNote || '요청을 해석하지 못해 기본 전략(200일 이동평균)으로 대체했습니다.'}`);
+      b.id = 'pro-downgrade';
+      $('#p-prereg').insertBefore(b, $('#p-prereg').firstChild.nextSibling);
+    }
     $('#p-prereg').classList.remove('hidden');
     $('#p-prereg').classList.add('reveal');
     setStep(1);
@@ -211,6 +327,10 @@ function renderPrereg(spec) {
   const stMeta = META.strategyTypes[type];
   const grid = (s.grid && s.grid.length) ? s.grid : stMeta.defaultGrid;
   const chosen = s.chosenParam ?? grid[Math.floor(grid.length / 2)];
+  const isDefaultGrid = JSON.stringify(grid) === JSON.stringify(stMeta.defaultGrid);
+  const gridSub = isDefaultGrid
+    ? `⚠ 기본 그리드 사용 중 (${chosen} 중심 — 평원 검사가 중앙값에 유리하게 편향될 수 있음). 직접 지정 권장.`
+    : '평원 검사가 훑는 값들';
 
   const g = $('#prereg-grid');
   g.innerHTML =
@@ -221,7 +341,7 @@ function renderPrereg(spec) {
     field(`선택 파라미터 (${stMeta.gridParam})`, `<input id="f-chosen" type="number" step="any" value="${chosen}">`,
           '평원 중간값 — 피크 사냥 금지') +
     field('그리드 (쉼표 구분)', `<input id="f-grid" type="text" value="${grid.join(', ')}">`,
-          '평원 검사가 훑는 값들') +
+          gridSub) +
     field('무훼손 판정 규칙', `<select id="f-passrule">${selectOpts(META.passRules, spec.passRule || 'mdd_and_calmar')}</select>`,
           '관문 통과선') +
     field('평원 허용오차', `<input id="f-tol" type="number" step="0.01" value="${spec.plateau?.tolerance ?? 0.15}">`,
@@ -534,7 +654,9 @@ async function demoSimple() {
   $('.mode-switch .ms[data-mode="simple"]').click();
   $('#s-tickers').value = 'AAPL, NVDA, BTC-USD, SPY, 005930.KS';
   $('#s-nl').value = '200일 이동평균 위일 때만 보유';
-  await runSimple();
+  await runSimple();                 // 해석 확인 표시
+  await new Promise((r) => setTimeout(r, 400));
+  $('#s-confirm-run').click();       // 승인 → 실행
 }
 async function demo() {
   $('.mode-switch .ms[data-mode="pro"]').click();
@@ -547,8 +669,15 @@ async function demo() {
   await $('#btn-run').onclick();
 }
 
+async function demoConfirm() {
+  $('.mode-switch .ms[data-mode="simple"]').click();
+  $('#s-tickers').value = 'AAPL, NVDA, SPY';
+  $('#s-nl').value = '종가가 200일선 위이고 RSI가 70 아래일 때만 보유';
+  await runSimple(); // 해석 확인에서 멈춤
+}
 boot().then(() => {
   const d = new URLSearchParams(location.search).get('demo');
   if (d === 'simple') demoSimple();
+  else if (d === 'confirm') demoConfirm();
   else if (d) demo();
 });

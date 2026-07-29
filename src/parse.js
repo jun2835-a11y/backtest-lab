@@ -83,16 +83,23 @@ export function fallbackParse(nl) {
     if (n) threshold = parseInt(n, 10);
   }
 
-  return {
+  // 복합 지표를 원했는데 키워드 폴백이라 조립 불가 → 강등 경고.
+  const advanced = /rsi|macd|볼린저|bollinger|돌파|breakout|모멘텀|momentum|밴드|band/.test(s);
+  const out = {
     strategy: spec,
     passRule: 'mdd_and_calmar',
     passMargin: 0,
     plateau: { neighborhood: 1, tolerance: 0.15 },
     multiTicker: { threshold },
     tickers: tickers.length ? tickers : TICKERS.slice(),
-    notes: `[키워드 폴백] ${STRATEGY_TYPES[spec.type].label}${spec.chosenParam ? `, 기준값 ${spec.chosenParam}` : ''}, ${threshold}/5 통과 요구`,
+    notes: `[키워드 폴백] ${STRATEGY_TYPES[spec.type].label}${spec.chosenParam ? `, 기준값 ${spec.chosenParam}` : ''}`,
     engine: 'fallback',
   };
+  if (advanced) {
+    out.downgraded = true;
+    out.downgradeNote = 'RSI·MACD 같은 복합 전략은 서버에 ANTHROPIC_API_KEY가 연결돼야 조립됩니다. 지금은 기본 전략으로 대체했습니다.';
+  }
+  return out;
 }
 
 export async function parseRequest(nl, mode = 'simple') {
@@ -111,16 +118,18 @@ export async function parseRequest(nl, mode = 'simple') {
     parsed.engine = 'llm';
 
     const type = parsed.strategy?.type;
+    const DEFAULT = { type: 'ma_timing', maType: 'sma', chosenParam: 200 };
+    const downgrade = (note) => { parsed.strategy = { ...DEFAULT }; parsed.downgraded = true; parsed.downgradeNote = note; };
     if (mode === 'pro') {
       // 정밀 모드: 그리드 스윕 필요 → 템플릿 타입만 허용, 벗어나면 안전 강등.
-      if (!TEMPLATE_TYPES.has(type)) parsed.strategy = { type: 'ma_timing', maType: 'sma', chosenParam: 200 };
+      if (!TEMPLATE_TYPES.has(type)) downgrade('요청을 정밀 모드 전략으로 해석하지 못해 기본 전략(200일 이동평균)으로 대체했습니다.');
       if (!parsed.tickers || !parsed.tickers.length) parsed.tickers = TICKERS.slice();
     } else {
       // 간편 모드: rule 또는 템플릿 허용. rule이 비정상이면 강등.
-      if (type === 'rule' && !parsed.strategy.long && !parsed.strategy.rule && !parsed.strategy.condition)
-        parsed.strategy = { type: 'ma_timing', maType: 'sma', chosenParam: 200 };
-      if (!TEMPLATE_TYPES.has(type) && type !== 'rule')
-        parsed.strategy = { type: 'ma_timing', maType: 'sma', chosenParam: 200 };
+      if (type === 'rule' && !parsed.strategy.long && !parsed.strategy.rule && !parsed.strategy.condition && !parsed.strategy.entry && !parsed.strategy.exit)
+        downgrade('규칙을 구성하지 못해 기본 전략(200일 이동평균)으로 대체했습니다.');
+      else if (!TEMPLATE_TYPES.has(type) && type !== 'rule')
+        downgrade('요청을 해석하지 못해 기본 전략(200일 이동평균)으로 대체했습니다.');
       if (!parsed.tickers) parsed.tickers = [];
     }
     return parsed;

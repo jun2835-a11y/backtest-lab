@@ -58,11 +58,23 @@
           </div>
         </div>
         <div class="btn-row">
-          <button class="btn primary" id="s-run">▶ 백테스트 돌리기</button>
+          <button class="btn primary" id="s-run">▶ 해석하기</button>
+          <button class="btn hidden" id="s-rerun">지난 스펙 그대로 재실행</button>
           <span id="s-status"></span>
         </div>
-        <div class="verdict-legend">판정: 전략이 <b>그냥 사서 들고 있기(매수후보유)</b>보다 위험대비수익(칼마)이 높으면 <b class="q">QUANT</b>, 아니면 <b class="nq">NOT-QUANT</b>.</div>
+        <div class="verdict-legend">판정: 전략이 <b>그냥 사서 들고 있기(매수후보유)</b>보다 위험대비수익(칼마)이 높으면 <b class="q">QUANT</b>, ±10% 안이면 <b class="pu">PUSH</b>(근소), 낮으면 <b class="nq">NOT-QUANT</b>.</div>
       </section>
+
+      <!-- 해석 확인(실행 전 승인) -->
+      <section class="panel hidden" id="s-confirm-panel">
+        <h2>해석 확인 <span class="h2-sub">— 이대로 실행할까요?</span></h2>
+        <div id="s-confirm-body"></div>
+        <div class="btn-row" style="margin-top:16px">
+          <button class="btn primary" id="s-confirm-run">▶ 이대로 백테스트 실행</button>
+          <button class="btn" id="s-confirm-cancel">✕ 다시 쓰기</button>
+        </div>
+      </section>
+
       <section class="panel hidden" id="s-result-panel">
         <h2>결과 · 안내판</h2>
         <div id="s-result-body"></div>

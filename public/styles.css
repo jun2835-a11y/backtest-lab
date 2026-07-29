@@ -71,6 +71,40 @@ header.masthead { padding: 44px 0 24px; }
 /* 자유 모드 넓은 보드(긴 티커 대응) */
 .board.wideboard .board-cols, .board.wideboard .brow { grid-template-columns: max-content 1fr; }
 
+/* 침묵 강등 경고 배너 */
+.downgrade-banner {
+  background: rgba(255,206,107,.1); border: 1px solid rgba(255,206,107,.5); color: var(--warn);
+  border-radius: 6px; padding: 12px 14px; margin: 0 0 16px; font-size: 13px; line-height: 1.5; font-weight: 500;
+}
+:root { --warn: #ffce6b; }
+
+/* 해석 확인 패널 */
+.h2-sub { font-family: var(--mono); font-size: 12px; color: var(--dim); font-weight: 400; }
+.spec-line { display: flex; gap: 14px; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.spec-line .k { flex: none; width: 56px; color: var(--faint); font-family: var(--sans); font-weight: 700; font-size: 11px; letter-spacing: .08em; padding-top: 2px; }
+.spec-line .v { color: var(--ink); }
+.spec-line .v b { color: var(--blue-lit); }
+.assump { margin-top: 14px; background: var(--panel2); border-radius: 6px; padding: 12px 16px; }
+.assump-t { font-family: var(--sans); font-weight: 700; font-size: 11px; letter-spacing: .08em; color: var(--dim); margin-bottom: 6px; }
+.assump ul { margin: 0; padding-left: 16px; color: var(--dim); font-size: 12px; line-height: 1.7; }
+.jsonwrap { margin-top: 14px; }
+.jsonwrap summary { cursor: pointer; color: var(--dim); font-size: 12px; }
+.jsonwrap .tag { color: var(--blue-lit); }
+.jsonwrap pre { background: var(--bg); border: 1px solid var(--line2); border-radius: 6px; padding: 12px; font-size: 11.5px; color: var(--ink); overflow-x: auto; margin: 10px 0; }
+.jsonnote { display: block; color: var(--faint); font-size: 11px; margin-top: 8px; line-height: 1.5; }
+
+/* 데이터 출처·비용 */
+.provenance { margin-top: 12px; font-size: 11.5px; color: var(--faint); line-height: 1.6; }
+.provenance b { color: var(--dim); }
+
+/* PUSH(근소) 판정 색 */
+.seg.c-push .cell.lit { --cellcolor: var(--warn); }
+.seg.c-push .cell.lit .glyph { filter: drop-shadow(0 0 4px rgba(255,206,107,.4)); }
+.brow.final.amberrow { background: linear-gradient(90deg, rgba(255,206,107,.12), rgba(255,206,107,.02)); box-shadow: inset 0 0 0 1px rgba(255,206,107,.3), 0 0 26px rgba(255,206,107,.12); }
+.brow.final.amberrow .seg .cell.lit { --cellcolor: var(--warn); }
+.verdict-tag.pushtag { color: var(--warn); border-color: var(--warn); }
+.verdict-legend b.pu { color: var(--warn); }
+
 /* ── 파이프라인 스테퍼 ── */
 .pipeline { display: flex; margin: 26px 0 28px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
 .step { flex: 1; min-width: 90px; padding: 11px 12px; background: var(--panel); border-right: 1px solid var(--line); }
