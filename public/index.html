@@ -39,11 +39,11 @@
         <h2>백테스트</h2>
         <div class="field" style="margin-bottom:16px">
           <label>종목 — 아무거나 (쉼표로 여러 개)</label>
-          <input id="s-tickers" type="text" placeholder="예: AAPL, TSLA, BTC-USD, SPY, 005930.KS">
+          <input id="s-tickers" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="예: AAPL, TSLA, BTC-USD, SPY, 005930.KS">
         </div>
         <div class="field" id="s-nl-wrap" style="margin-bottom:16px">
           <label>전략 — 자연어로 설명</label>
-          <input id="s-nl" type="text" placeholder="예: 50일선이 200일선 위일 때만 보유">
+          <input id="s-nl" type="text" autocomplete="off" spellcheck="false" placeholder="예: 50일선이 200일선 위일 때만 보유">
           <div class="sub">전략을 문장으로 적으면 자동 해석해 백테스트합니다.</div>
         </div>
         <div class="prereg-grid">

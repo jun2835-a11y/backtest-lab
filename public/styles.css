@@ -114,6 +114,18 @@ textarea#request:focus { outline: none; border-color: var(--blue); box-shadow: 0
 .field label { display: block; font-family: var(--sans); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--faint); margin-bottom: 6px; font-weight: 700; }
 .field select, .field input { width: 100%; background: var(--bg); color: var(--ink); border: 1px solid var(--line2); border-radius: 4px; padding: 9px 11px; font-family: var(--mono); font-size: 13px; }
 .field select:focus, .field input:focus { outline: none; border-color: var(--blue); }
+/* 브라우저 자동완성이 흰 배경을 씌우는 것 차단(어두운 배경·밝은 글자 유지) */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active,
+textarea:-webkit-autofill {
+  -webkit-text-fill-color: var(--ink) !important;
+  -webkit-box-shadow: 0 0 0 1000px var(--bg) inset !important;
+  box-shadow: 0 0 0 1000px var(--bg) inset !important;
+  caret-color: var(--ink);
+  transition: background-color 99999s ease-in-out 0s;
+}
 .field .sub { font-size: 10.5px; color: var(--faint); margin-top: 5px; }
 fieldset { border: none; margin: 0; padding: 0; }
 fieldset.locked { opacity: .6; }
