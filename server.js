@@ -37,7 +37,8 @@ app.post('/api/parse', async (req, res) => {
   try {
     const nl = String(req.body?.request || '').slice(0, 4000);
     if (!nl.trim()) return res.status(400).json({ error: '요청 문장이 비었습니다.' });
-    const spec = await parseRequest(nl);
+    const mode = req.body?.mode === 'pro' ? 'pro' : 'simple';
+    const spec = await parseRequest(nl, mode);
     res.json({ ok: true, spec });
   } catch (e) {
     res.status(500).json({ error: String(e.message || e) });
@@ -64,10 +65,18 @@ app.post('/api/simple', async (req, res) => {
     const tickers = (body.tickers || []).map((t) => String(t).trim().toUpperCase()).filter(Boolean).slice(0, 12);
     if (!tickers.length) return res.status(400).json({ error: '종목을 하나 이상 입력하세요.' });
 
-    const spec = normalizeSpec(body.strategy || { type: 'ma_timing', maType: 'sma' });
-    const g = gridFor(spec);
-    const chosen = body.strategy?.chosenParam ?? spec.chosenParam ?? g.grid[Math.floor(g.grid.length / 2)];
-    spec.chosenParam = chosen;
+    const inSpec = body.strategy || { type: 'ma_timing', maType: 'sma' };
+    let spec, chosen = null, label;
+    if (inSpec.type === 'rule') {
+      spec = inSpec;                                   // 조립식 규칙: 그대로 해석
+      label = inSpec.label || '커스텀 규칙';
+    } else {
+      spec = normalizeSpec(inSpec);
+      const g = gridFor(spec);
+      chosen = inSpec.chosenParam ?? spec.chosenParam ?? g.grid[Math.floor(g.grid.length / 2)];
+      spec.chosenParam = chosen;
+      label = ({ ma_timing: `MA·${chosen}`, dual_ma: `골든크로스·${chosen}`, vol_target: `변동성·${chosen}` })[spec.type] || spec.type;
+    }
 
     const to = body.to || new Date().toISOString().slice(0, 10);
     const from = body.from || `${new Date().getUTCFullYear() - 10}-01-01`;
@@ -88,7 +97,7 @@ app.post('/api/simple', async (req, res) => {
       }
     }
     const quant = rows.filter((r) => r.pass).length;
-    res.json({ ok: true, result: { rows, summary: { quant, total: rows.length }, spec: { type: spec.type, maType: spec.maType, chosenParam: chosen, fast: spec.fast, window: spec.window }, from, to } });
+    res.json({ ok: true, result: { rows, summary: { quant, total: rows.length }, spec: { type: spec.type, label, chosenParam: chosen }, from, to } });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: String(e.message || e) });

@@ -7,31 +7,53 @@ import { TICKERS } from './data.js';
 
 const MODEL = process.env.ANTHROPIC_MODEL || 'claude-opus-4-8';
 
-const SYSTEM = `너는 레버리지 ETF 백테스트 검증 랩의 요청 파서다.
+const TEMPLATE_TYPES = new Set(['ma_timing', 'dual_ma', 'vol_target']);
+
+// 정밀 모드: 그리드 스윕이 필요하므로 3개 템플릿 타입만 허용.
+const SYSTEM_PRO = `너는 레버리지 ETF 백테스트 검증 랩의 요청 파서다.
 사용자의 자연어 전략 요청을 아래 JSON 스펙으로만 변환한다. 설명 없이 JSON만 출력.
 
-전략 타입(type):
-- "ma_timing": 종가가 이동평균 위면 보유. gridParam=period. fixed: maType("sma"|"ema").
-- "dual_ma": 단기MA>장기MA면 보유. gridParam=slow. fixed: fast(int), maType.
-- "vol_target": 롤링변동성<임계면 보유. gridParam=volCap. fixed: window(int).
+전략 타입(type) — 반드시 아래 셋 중 하나:
+- "ma_timing": 종가가 이동평균 위면 보유. fixed: maType("sma"|"ema"). chosenParam=이동평균 일수.
+- "dual_ma": 단기MA>장기MA면 보유. fixed: fast(int), maType. chosenParam=장기 일수.
+- "vol_target": 롤링변동성<임계면 보유. fixed: window(int). chosenParam=임계.
 
-출력 JSON 형태:
+출력:
 {
-  "strategy": { "type": "...", "maType": "sma|ema", "fast": 50, "window": 20,
-                "grid": [숫자 배열 또는 생략], "chosenParam": 숫자또는생략 },
+  "strategy": { "type": "...", "maType": "sma|ema", "fast": 50, "window": 20, "grid": [숫자...생략가능], "chosenParam": 숫자 },
   "passRule": "mdd_and_calmar|beat_bh_calmar|positive_calmar",
-  "passMargin": 0,
   "plateau": { "neighborhood": 1, "tolerance": 0.15 },
   "multiTicker": { "threshold": 3 },
   "tickers": ["TQQQ","SOXL","UPRO","TNA","LABU"],
   "notes": "요청 해석 한 줄"
 }
+규칙: 종목 미지정 시 5종목 전체. "200일선"은 chosenParam. 알 수 없으면 ma_timing/sma.`;
 
-규칙:
-- 종목 미지정 시 5종목 전체 사용.
-- 그리드·chosenParam 미지정 시 생략(서버 기본값 사용).
-- "200일선" 같은 표준값은 chosenParam으로.
-- 알 수 없으면 ma_timing/sma 기본.`;
+// 간편 모드: 초보의 아무 문장이나 → 조립식 규칙(rule)로도 구성 가능.
+const SYSTEM_SIMPLE = `너는 백테스트 랩의 전략 파서다. 초보 사용자의 자연어 전략을 아래 JSON으로만 변환한다. 설명 없이 JSON만.
+
+간단한 표준 전략이면 템플릿을 쓴다:
+- {"type":"ma_timing","maType":"sma"|"ema","chosenParam":이동평균일수}
+- {"type":"dual_ma","maType":"sma"|"ema","fast":단기,"chosenParam":장기}   // 골든크로스
+- {"type":"vol_target","window":기간,"chosenParam":변동성상한(예 0.025)}
+
+복합/지표 조건(RSI·MACD·볼린저·돌파·모멘텀·AND/OR 등)이면 조립식 규칙을 쓴다.
+피연산: 숫자  또는  {"ind":"price"}|{"ind":"sma","period":n}|{"ind":"ema","period":n}
+      |{"ind":"rsi","period":n}|{"ind":"roc","period":n}|{"ind":"vol","period":n}
+      |{"ind":"high","period":n}|{"ind":"low","period":n}
+      |{"ind":"macd","line":"line"|"signal"|"hist"}|{"ind":"bb","period":20,"mult":2,"band":"upper"|"lower"|"mid"}
+조건: {"op":">"|"<"|">="|"<="|"cross_up"|"cross_down","left":<피연산>,"right":<피연산>} | {"all":[..]}(AND) | {"any":[..]}(OR) | {"not":cond}
+
+두 가지 형태 중 의미에 맞게 고른다:
+(A) 상태형 — "~일 때/~이면 보유·유지": {"type":"rule","label":"..","long":<상태조건>}  (참인 구간 보유)
+    ※ 상태형에는 반드시 op ">","<",">=","<=" 만 쓴다(cross 금지). 예: MACD 골든 유지 = macd.line > macd.signal.
+(B) 이벤트형 — "~에 진입/매수하고 ~에 청산/매도": {"type":"rule","label":"..","entry":<진입조건>,"exit":<청산조건>}
+    진입~청산 사이를 보유. cross_up/cross_down는 여기서만 쓴다.
+
+출력: {"strategy":<템플릿 또는 rule>, "tickers":[문장 속 Yahoo 심볼, 없으면 []], "notes":"한 줄 요약"}
+예1) "50일선이 200일선 위일 때만 보유" → {"strategy":{"type":"dual_ma","maType":"sma","fast":50,"chosenParam":200},"tickers":[],"notes":"50/200 골든크로스"}
+예2) "MACD 골든크로스에 사고 데드크로스에 판다" → {"strategy":{"type":"rule","label":"MACD 골든 진입·데드 청산","entry":{"op":"cross_up","left":{"ind":"macd","line":"line"},"right":{"ind":"macd","line":"signal"}},"exit":{"op":"cross_down","left":{"ind":"macd","line":"line"},"right":{"ind":"macd","line":"signal"}}},"tickers":[],"notes":"MACD 크로스"}
+예3) "RSI 30 아래고 종가가 200일선 위일 때 보유" → {"strategy":{"type":"rule","label":"추세+RSI<30","long":{"all":[{"op":">","left":{"ind":"price"},"right":{"ind":"sma","period":200}},{"op":"<","left":{"ind":"rsi","period":14},"right":30}]}},"tickers":[],"notes":"RSI 저점"}`;
 
 function stripJson(text) {
   const m = text.match(/\{[\s\S]*\}/);
@@ -73,21 +95,34 @@ export function fallbackParse(nl) {
   };
 }
 
-export async function parseRequest(nl) {
+export async function parseRequest(nl, mode = 'simple') {
   const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) return fallbackParse(nl);
+  if (!key) return fallbackParse(nl); // 폴백은 템플릿만(조립식 규칙은 LLM 필요)
   try {
     const client = new Anthropic({ apiKey: key });
     const msg = await client.messages.create({
       model: MODEL,
-      max_tokens: 1024,
-      system: SYSTEM,
+      max_tokens: 1200,
+      system: mode === 'pro' ? SYSTEM_PRO : SYSTEM_SIMPLE,
       messages: [{ role: 'user', content: nl }],
     });
     const text = msg.content.map((b) => (b.type === 'text' ? b.text : '')).join('');
     const parsed = JSON.parse(stripJson(text));
     parsed.engine = 'llm';
-    if (!parsed.tickers || !parsed.tickers.length) parsed.tickers = TICKERS.slice();
+
+    const type = parsed.strategy?.type;
+    if (mode === 'pro') {
+      // 정밀 모드: 그리드 스윕 필요 → 템플릿 타입만 허용, 벗어나면 안전 강등.
+      if (!TEMPLATE_TYPES.has(type)) parsed.strategy = { type: 'ma_timing', maType: 'sma', chosenParam: 200 };
+      if (!parsed.tickers || !parsed.tickers.length) parsed.tickers = TICKERS.slice();
+    } else {
+      // 간편 모드: rule 또는 템플릿 허용. rule이 비정상이면 강등.
+      if (type === 'rule' && !parsed.strategy.long && !parsed.strategy.rule && !parsed.strategy.condition)
+        parsed.strategy = { type: 'ma_timing', maType: 'sma', chosenParam: 200 };
+      if (!TEMPLATE_TYPES.has(type) && type !== 'rule')
+        parsed.strategy = { type: 'ma_timing', maType: 'sma', chosenParam: 200 };
+      if (!parsed.tickers) parsed.tickers = [];
+    }
     return parsed;
   } catch (e) {
     const fb = fallbackParse(nl);

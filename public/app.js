@@ -64,7 +64,7 @@ function periodRange() {
 async function parseNL(nl) {
   const r = await (await fetch('/api/parse', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ request: nl }),
+    body: JSON.stringify({ request: nl, mode: 'simple' }),
   })).json();
   if (!r.ok) throw new Error(r.error || '해석 실패');
   SPEC = r.spec;
@@ -122,9 +122,8 @@ function renderSimpleResult(res) {
   const leftW = Math.max(6, ...rows.map((r) => r.ticker.length));
 
   const board = el('div', 'board wideboard');
-  const stratName = ({ ma_timing: 'MA', dual_ma: '골든크로스', vol_target: '변동성관문' })[res.spec.type] || res.spec.type;
   board.innerHTML = `
-    <div class="board-caption"><span class="eyebrow">BACK TEST</span><span class="strat">${stratName} · ${res.spec.chosenParam} · ${res.from}~${res.to}</span></div>
+    <div class="board-caption"><span class="eyebrow">BACK TEST</span><span class="strat">${res.spec.label || res.spec.type} · ${res.from}~${res.to}</span></div>
     <div class="board-cols"><div>Ticker</div><div>Verdict</div></div>
     <div class="board-rows"></div>`;
   const rowsEl = board.querySelector('.board-rows');
@@ -182,7 +181,7 @@ $('#btn-parse').onclick = async () => {
   try {
     const r = await (await fetch('/api/parse', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ request }),
+      body: JSON.stringify({ request, mode: 'pro' }),
     })).json();
     if (!r.ok) throw new Error(r.error || '파싱 실패');
     SPEC = r.spec;
@@ -534,6 +533,7 @@ function tickerCard(pt) {
 async function demoSimple() {
   $('.mode-switch .ms[data-mode="simple"]').click();
   $('#s-tickers').value = 'AAPL, NVDA, BTC-USD, SPY, 005930.KS';
+  $('#s-nl').value = '200일 이동평균 위일 때만 보유';
   await runSimple();
 }
 async function demo() {
