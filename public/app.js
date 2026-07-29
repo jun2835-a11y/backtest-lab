@@ -34,7 +34,6 @@ async function boot() {
 }
 
 // ── 모드 전환 + 간편 모드 ──
-const TICKER_PRESETS = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'GOOGL', 'SPY', 'QQQ', 'BTC-USD', 'ETH-USD', '005930.KS'];
 const S_PARAM = {
   ma:     { label: '이동평균 일수', value: 200 },
   golden: { label: '장기 이동평균 일수', value: 200 },
@@ -50,19 +49,6 @@ function initSimpleMode() {
       $('#mode-simple').classList.toggle('hidden', mode !== 'simple');
       $('#mode-pro').classList.toggle('hidden', mode !== 'pro');
     };
-  });
-
-  // 종목 프리셋 칩
-  const tp = $('#ticker-presets');
-  TICKER_PRESETS.forEach((t) => {
-    const c = el('span', 'ex', t);
-    c.onclick = () => {
-      const inp = $('#s-tickers');
-      const cur = inp.value.split(',').map((x) => x.trim()).filter(Boolean);
-      if (!cur.map((x) => x.toUpperCase()).includes(t)) cur.push(t);
-      inp.value = cur.join(', ');
-    };
-    tp.appendChild(c);
   });
 
   // 전략 선택 → 파라미터 라벨/자연어 박스
