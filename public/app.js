@@ -34,12 +34,6 @@ async function boot() {
 }
 
 // ── 모드 전환 + 간편 모드 ──
-const S_PARAM = {
-  ma:     { label: '이동평균 일수', value: 200 },
-  golden: { label: '장기 이동평균 일수', value: 200 },
-  vol:    { label: '변동성 상한 (예 0.025)', value: 0.025 },
-};
-
 function initSimpleMode() {
   // 모드 토글
   $$('.mode-switch .ms').forEach((b) => {
