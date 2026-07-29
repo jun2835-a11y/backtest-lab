@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>백테스트 검증 · Departures</title>
+  <title>BACK TEST · 검증 안내판</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Roboto+Mono:wght@400;500;700&display=swap" rel="stylesheet">
@@ -15,12 +15,10 @@
     <header class="masthead">
       <div class="mast-top">
         <div class="plane-badge">
-          <svg viewBox="0 0 24 24"><path d="M21 16v-2l-8-5V3.5A1.5 1.5 0 0 0 11.5 2 1.5 1.5 0 0 0 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5z"/></svg>
+          <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1.41 15.09v.58c0 .73-.6 1.33-1.33 1.33h-.01c-.73 0-1.33-.6-1.33-1.33v-.6c-1.33-.28-2.51-1.01-3.01-2.24-.23-.55.2-1.16.8-1.16h.24c.37 0 .67.25.81.6.29.75 1.05 1.27 2.2 1.27 1.54 0 2.02-.77 2.02-1.25 0-.65-.35-1.26-2.13-1.68-1.98-.48-3.34-1.3-3.34-2.94 0-1.37 1.11-2.27 2.48-2.57V6.9c0-.73.6-1.33 1.33-1.33h.01c.73 0 1.33.6 1.33 1.33v.62c1.38.34 2.25 1.2 2.63 2.26.2.55-.22 1.13-.81 1.13h-.26c-.37 0-.67-.26-.77-.62-.23-.76-.86-1.25-1.98-1.25-1.4 0-2.02.6-2.02 1.34 0 .65.35 1.26 2.13 1.68 1.98.48 3.34 1.3 3.34 2.94 0 1.37-1.11 2.27-2.48 2.57z"/></svg>
         </div>
-        <h1>Departures</h1>
+        <h1>BACK TEST</h1>
       </div>
-      <p class="mast-sub">자연어로 전략을 던지면 — <b>사전등록 → 이중 관문 → 평원 → 다종목</b> 검증을 거쳐
-        각 종목이 기준을 넘는지, 그리고 최종 판정 <b>QUANT / NOT-QUANT</b>를 출발 안내판처럼 촤라락 띄웁니다.</p>
       <div class="status-chips">
         <span class="chip" id="chip-llm"><span class="dot"></span><span>파서 확인중…</span></span>
         <span class="chip on"><span class="dot"></span>DATA · YAHOO (실 + 3배합성)</span>
@@ -50,7 +48,6 @@
     <!-- 2. 사전등록 -->
     <section class="panel hidden" id="p-prereg">
       <h2><span class="idx">02</span> 사전등록 <span id="reg-seal" class="seal-stamp">등록됨 · 봉인</span></h2>
-      <p class="hint">돌리기 전 여기서 그리드·통과선·평원 임계·과반을 잠급니다. 잠근 뒤 값이 바뀌면 과적합으로 경고합니다.</p>
       <fieldset id="prereg-form">
         <div class="prereg-grid" id="prereg-grid"></div>
         <div class="field" style="margin-bottom:16px">
@@ -73,10 +70,7 @@
     </section>
 
     <footer class="foot">
-      <div>데이터: Yahoo Finance 조정종가. 관문② "잃어버린 10년"은 기초지수(<code>^NDX ^SOX ^GSPC ^RUT ^NBI</code>)에
-        3배 일간복리 + 운용보수·차입비용 드래그를 적용한 <b>합성 시계열</b> — 실 ETF가 없던 2000~2010 근사치.</div>
-      <div style="margin-top:6px">판정: <b>QUANT</b>=이중관문·평원 통과 종목이 과반 기준 이상 → 채택. <b>NOT-QUANT</b>=기각.
-        칼마 10% 내면 수익 우선 · 동급이면 단순한 쪽. 백테스트는 미래 수익을 보장하지 않습니다.</div>
+      <div>백테스트는 미래 수익을 보장하지 않습니다.</div>
     </footer>
 
   </div>

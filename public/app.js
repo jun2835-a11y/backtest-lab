@@ -247,7 +247,7 @@ function renderResult(res) {
   const s = SEALED.strategy;
   const stratLabel = `${(s.maType || 'sma').toUpperCase()}${s.chosenParam ?? ''} · 이중관문·평원 · ${res.multiTicker.threshold}/${res.universe.length}`;
   board.innerHTML = `
-    <div class="board-caption"><span class="eyebrow">BACKTEST · DEPARTURES</span><span class="strat">${stratLabel}</span></div>
+    <div class="board-caption"><span class="eyebrow">BACK TEST</span><span class="strat">${stratLabel}</span></div>
     <div class="board-cols"><div>Ticker</div><div>Verdict</div></div>
     <div class="board-rows"></div>`;
   const rows = board.querySelector('.board-rows');
