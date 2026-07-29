@@ -21,9 +21,6 @@ const fmtR = (x) => x == null ? '—' : (!isFinite(x) ? '∞' : x.toFixed(2));
 // ── 부팅 ──
 async function boot() {
   META = await (await fetch('/api/meta')).json();
-  const chip = $('#chip-llm');
-  chip.className = 'chip ' + (META.llm ? 'on' : 'off');
-  chip.innerHTML = `<span class="dot"></span>${META.llm ? '자연어 파서 · Claude 연결' : '자연어 파서 · 키워드 폴백'}`;
 
   const ex = $('#examples');
   EXAMPLES.forEach((t) => {
