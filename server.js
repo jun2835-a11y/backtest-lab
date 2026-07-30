@@ -96,7 +96,8 @@ app.post('/api/simple', async (req, res) => {
         const pos = positionsFor(spec, closes, chosen);
         const run = runBacktest(bars, pos, costOpts);
         const strat = run.metrics;
-        const bh = buyHold(bars, costOpts).metrics;
+        const bhRun = buyHold(bars, costOpts);
+        const bh = bhRun.metrics;
 
         // 재현성: 종목+스펙+기간으로 시드 고정.
         const rng = mulberry32(hashStr(`${t}|${JSON.stringify(spec)}|${from}|${to}`));
@@ -128,12 +129,19 @@ app.post('/api/simple', async (req, res) => {
         else if (corrob >= 2) { state = 'quant'; label2 = 'QUANT'; }
         else { state = 'weak'; label2 = 'QUANT?'; } // 베이스만 이기고 확증 부족
 
+        // 자산곡선 + 낙폭 차트용 다운샘플(~160점).
+        const N = bars.length, stride = Math.max(1, Math.floor(N / 160));
+        const pts = [];
+        for (let i = 0; i < N; i += stride) pts.push({ i, s: run.equity[i], b: bhRun.equity[i], d: run.drawdown[i] });
+        if (pts[pts.length - 1].i !== N - 1) pts.push({ i: N - 1, s: run.equity[N - 1], b: bhRun.equity[N - 1], d: run.drawdown[N - 1] });
+
         rows.push({
           ticker: t, name, strat, bh,
           verdict: { state, label: label2 },
-          oos: { split: bars[k].iso, train: { strat: trainStrat, bh: trainBH }, test: { strat: testStrat, bh: testBH } },
+          oos: { split: bars[k].iso, splitIdx: k, train: { strat: trainStrat, bh: trainBH }, test: { strat: testStrat, bh: testBH } },
           calmarCI, control,
           checks: { baseBeat, oosBeat, vsRandom, ciPositive, corrob },
+          chart: { pts, n: N, from: bars[0].iso, to: bars[N - 1].iso },
         });
       } catch (e) {
         rows.push({ ticker: t, error: String(e.message || e).slice(0, 100) });

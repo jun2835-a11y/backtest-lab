@@ -265,6 +265,7 @@ function renderSimpleResult(res) {
   const btn = el('button', 'btn ghost', '종목별 통계 상세 펼치기 ▾');
   const dc = el('div', 'details hidden');
   rows.forEach((r) => dc.appendChild(simpleCard(r)));
+  if (new URLSearchParams(location.search).get('demo')) { dc.classList.remove('hidden'); btn.textContent = '접기 ▴'; }
   btn.onclick = () => { dc.classList.toggle('hidden'); btn.textContent = dc.classList.contains('hidden') ? '종목별 통계 상세 펼치기 ▾' : '접기 ▴'; };
   details.appendChild(btn); details.appendChild(dc);
   body.appendChild(details);
@@ -273,6 +274,41 @@ function renderSimpleResult(res) {
 }
 
 const CHK = (ok) => ok ? '<span class="chk y">✓</span>' : '<span class="chk n">✗</span>';
+
+// 자산곡선(로그) + 낙폭 차트 — 라이브러리 없이 인라인 SVG.
+function equityChartSVG(chart, oosIdx) {
+  const pts = chart?.pts, n = chart?.n;
+  if (!pts || pts.length < 2) return '';
+  const W = 720, padL = 48, padR = 14, eqTop = 14, eqBot = 150, ddTop = 178, ddBot = 248;
+  let lmin = Infinity, lmax = -Infinity, maxDd = 0;
+  for (const p of pts) {
+    const s = Math.log(Math.max(p.s, 1e-6)), b = Math.log(Math.max(p.b, 1e-6));
+    if (s < lmin) lmin = s; if (b < lmin) lmin = b; if (s > lmax) lmax = s; if (b > lmax) lmax = b;
+    if (p.d > maxDd) maxDd = p.d;
+  }
+  const span = (lmax - lmin) || 1;
+  const xOf = (i) => padL + (i / (n - 1)) * (W - padL - padR);
+  const yEq = (v) => eqBot - (Math.log(Math.max(v, 1e-6)) - lmin) / span * (eqBot - eqTop);
+  const yDd = (d) => ddTop + (maxDd > 0 ? d / maxDd : 0) * (ddBot - ddTop);
+  const line = (key) => pts.map((p) => `${xOf(p.i).toFixed(1)},${yEq(p[key]).toFixed(1)}`).join(' ');
+  const ddPath = `M ${xOf(pts[0].i).toFixed(1)},${ddTop} ` + pts.map((p) => `L ${xOf(p.i).toFixed(1)},${yDd(p.d).toFixed(1)}`).join(' ') + ` L ${xOf(pts[pts.length - 1].i).toFixed(1)},${ddTop} Z`;
+  const oosX = xOf(oosIdx).toFixed(1);
+  const mult = (lg) => '×' + Math.exp(lg).toFixed(Math.exp(lg) >= 10 ? 0 : 1);
+  return `<svg class="eqchart" viewBox="0 0 ${W} 260" preserveAspectRatio="xMidYMid meet">
+    <line class="grid" x1="${padL}" y1="${eqBot}" x2="${W - padR}" y2="${eqBot}"/>
+    <text class="lab" x="4" y="${eqTop + 8}">${mult(lmax)}</text>
+    <text class="lab" x="4" y="${eqBot}">${mult(lmin)}</text>
+    <text class="lab" x="4" y="${ddTop + 9}">DD</text>
+    <text class="lab" x="4" y="${ddBot}">-${(maxDd * 100).toFixed(0)}%</text>
+    <path class="ddarea" d="${ddPath}"/>
+    <polyline class="bh" points="${line('b')}"/>
+    <polyline class="strat" points="${line('s')}"/>
+    <line class="oos" x1="${oosX}" y1="${eqTop}" x2="${oosX}" y2="${ddBot}"/>
+    <text class="oos-lab" x="${oosX}" y="${eqTop - 3}">OOS→</text>
+    <text class="leg strat-l" x="${W - padR}" y="${eqTop + 8}">— 전략</text>
+    <text class="leg bh-l" x="${W - padR - 66}" y="${eqTop + 8}">— 매수후보유</text>
+  </svg>`;
+}
 
 function simpleCard(r) {
   const card = el('div', 'ticker-card');
@@ -291,6 +327,7 @@ function simpleCard(r) {
     </div>
     <div class="tc-body open">
       ${metricsTable(metricRow('전략(전체)', r.strat, 'strat', r.bh) + metricRow('매수후보유', r.bh, 'bh', null))}
+      ${equityChartSVG(r.chart, r.oos.splitIdx)}
       <div class="stat-grid">
         <div class="stat-box">
           <div class="sb-t">표본 외(OOS) — 뒤 40% 검증 · 분리 ${r.oos.split}</div>

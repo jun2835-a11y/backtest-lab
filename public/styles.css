@@ -117,6 +117,19 @@ header.masthead { padding: 44px 0 24px; }
 .stat-box .sb-row .vs { font-size: 11px; color: var(--faint); }
 .stat-box .sb-hint { font-size: 10.5px; color: var(--faint); margin-top: 5px; line-height: 1.5; }
 .stat-box .sb-checks { font-size: 11.5px; color: var(--dim); line-height: 1.7; }
+/* 자산곡선 차트 */
+.eqchart { width: 100%; height: auto; display: block; margin: 12px 0 6px; }
+.eqchart .grid { stroke: var(--line2); stroke-width: 1; stroke-dasharray: 2 3; }
+.eqchart .strat { fill: none; stroke: var(--blue-lit); stroke-width: 2; }
+.eqchart .bh { fill: none; stroke: var(--faint); stroke-width: 1.5; }
+.eqchart .ddarea { fill: rgba(255,95,95,.28); stroke: none; }
+.eqchart .oos { stroke: var(--warn); stroke-width: 1; stroke-dasharray: 3 3; opacity: .8; }
+.eqchart text { font-family: var(--mono); font-size: 11px; fill: var(--faint); }
+.eqchart .lab { font-size: 10px; }
+.eqchart .oos-lab { fill: var(--warn); font-size: 10px; text-anchor: middle; }
+.eqchart .strat-l { fill: var(--blue-lit); text-anchor: end; }
+.eqchart .bh-l { fill: var(--faint); text-anchor: end; }
+
 .cost-line { margin-top: 8px; font-size: 11.5px; color: var(--dim); }
 .cost-line b { color: var(--ink); font-variant-numeric: tabular-nums; }
 .chk { font-weight: 700; }
