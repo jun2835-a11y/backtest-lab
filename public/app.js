@@ -68,6 +68,36 @@ function initSimpleMode() {
 function saveSpec(p) { try { localStorage.setItem('bt_last_spec', JSON.stringify(p)); } catch (e) {} }
 function loadSpec() { try { return JSON.parse(localStorage.getItem('bt_last_spec')); } catch (e) { return null; } }
 
+// ── 실행 히스토리(이전 결과와 비교) ──
+const VRANK = { quant: 3, weak: 2, push: 1, cut: 0, err: -1 };
+function loadHistory() { try { return JSON.parse(localStorage.getItem('bt_history') || '[]'); } catch (e) { return []; } }
+function saveHistory(h) { try { localStorage.setItem('bt_history', JSON.stringify(h.slice(-12))); } catch (e) {} }
+function buildHistoryEntry(res, input) {
+  const byTicker = {};
+  for (const r of res.rows) { if (r.error) continue; byTicker[r.ticker] = { v: r.verdict.state, label: r.verdict.label, calmar: r.strat.calmar, cagr: r.strat.cagr, mdd: r.strat.mdd }; }
+  return { ts: Date.now(), at: new Date().toISOString().slice(0, 16).replace('T', ' '), label: res.spec.label || res.spec.type, from: res.from, to: res.to, benchmark: input?.benchmark || 'self', byTicker };
+}
+function updateCompare(currentRows, priors, selectedTs) {
+  const box = document.getElementById('cmp-table');
+  if (!box) return;
+  if (selectedTs === 'none') { box.innerHTML = '<div class="cmp-none">비교하지 않음</div>'; return; }
+  const base = priors.find((p) => String(p.ts) === String(selectedTs)) || priors[priors.length - 1];
+  const rows = currentRows.filter((r) => !r.error);
+  let html = `<div class="cmp-meta">기준: <b>${base.label}</b> · ${base.at} · ${base.from}~${base.to} · ${BENCH_KO[base.benchmark] || '자기 매수후보유'}</div>
+    <table class="cmp-table"><thead><tr><th>Ticker</th><th>기준 판정(칼마)</th><th>현재 판정(칼마)</th><th>Δ칼마</th><th>변화</th></tr></thead><tbody>`;
+  for (const r of rows) {
+    const b = base.byTicker[r.ticker];
+    if (!b) { html += `<tr><td>${r.ticker}</td><td class="muted">—</td><td>${r.verdict.label} (${fmtR(r.strat.calmar)})</td><td>—</td><td class="new">신규</td></tr>`; continue; }
+    const d = r.strat.calmar - b.calmar;
+    const dTxt = isFinite(d) ? (d >= 0 ? '+' : '') + d.toFixed(2) : '∞';
+    const rankUp = (VRANK[r.verdict.state] ?? 0) - (VRANK[b.v] ?? 0);
+    const arrow = rankUp > 0 ? '<span class="up">▲ 개선</span>' : rankUp < 0 ? '<span class="down">▼ 악화</span>' : (isFinite(d) && Math.abs(d) < 0.01 ? '<span class="same">= 동일</span>' : (d > 0 ? '<span class="up">▲</span>' : '<span class="down">▼</span>'));
+    html += `<tr><td>${r.ticker}</td><td class="muted">${b.label} (${fmtR(b.calmar)})</td><td>${r.verdict.label} (${fmtR(r.strat.calmar)})</td><td class="${d >= 0 ? 'up' : 'down'}">${dTxt}</td><td>${arrow}</td></tr>`;
+  }
+  html += '</tbody></table>';
+  box.innerHTML = html;
+}
+
 // ── 내보내기: CSV·JSON·공유 링크 ──
 function download(filename, text, mime) {
   const blob = new Blob([text], { type: mime || 'text/plain;charset=utf-8' });
@@ -313,6 +343,22 @@ function renderSimpleResult(res) {
   $('#exp-json').onclick = () => exportJSON();
   $('#exp-share').onclick = () => exportShare();
 
+  // 이전 실행과 비교
+  const priors = loadHistory();
+  if (priors.length) {
+    const cmp = el('div', 'compare');
+    cmp.innerHTML = `<div class="cmp-head"><span class="ch-t">이전 실행과 비교 (A/B)</span>
+      <select id="cmp-base"></select>
+      <button class="btn ghost" id="cmp-clear">기록 초기화</button></div>
+      <div id="cmp-table"></div>`;
+    body.appendChild(cmp);
+    const sel = cmp.querySelector('#cmp-base');
+    sel.innerHTML = priors.slice().reverse().map((p) => `<option value="${p.ts}">${p.at} · ${p.label} (${p.from}~${p.to})</option>`).join('') + '<option value="none">비교 안 함</option>';
+    sel.onchange = () => updateCompare(res.rows, priors, sel.value);
+    cmp.querySelector('#cmp-clear').onclick = () => { localStorage.removeItem('bt_history'); cmp.remove(); };
+    updateCompare(res.rows, priors, sel.value);
+  }
+
   const cm = rows.find((r) => r.strat)?.strat?.costModel;
   const costDesc = cm ? `반스프레드 ${cm.halfSpreadBps}bps + 변동성비례 슬리피지(일변동성 × ${cm.slippageVolMult})` : '스프레드+슬리피지';
   const prov = el('div', 'provenance',
@@ -344,6 +390,9 @@ function renderSimpleResult(res) {
   btn.onclick = () => { dc.classList.toggle('hidden'); btn.textContent = dc.classList.contains('hidden') ? '종목별 통계 상세 펼치기 ▾' : '접기 ▴'; };
   details.appendChild(btn); details.appendChild(dc);
   body.appendChild(details);
+
+  // 현재 실행을 히스토리에 저장(다음 실행이 이걸 기준으로 비교).
+  try { const h = loadHistory(); h.push(buildHistoryEntry(res, LAST_RESULT?.input)); saveHistory(h); } catch (e) {}
 
   animateBoard(board);
 }
@@ -832,10 +881,18 @@ async function demoConfirm() {
   $('#s-nl').value = '종가가 200일선 위이고 RSI가 70 아래일 때만 보유';
   await runSimple(); // 해석 확인에서 멈춤
 }
+async function demoCompare() {
+  $('.mode-switch .ms[data-mode="simple"]').click();
+  try { localStorage.removeItem('bt_history'); } catch (e) {}
+  const tk = ['NVDA', 'AAPL', 'SPY'], from = '2019-01-01', to = '2025-01-01';
+  await runWith(tk, { type: 'ma_timing', maType: 'sma', chosenParam: 200, label: 'MA·200' }, from, to, 'self');
+  await runWith(tk, { type: 'ma_timing', maType: 'sma', chosenParam: 100, label: 'MA·100' }, from, to, 'self');
+}
 boot().then(() => {
   if (tryShareLink()) return;
   const d = new URLSearchParams(location.search).get('demo');
   if (d === 'simple') demoSimple();
   else if (d === 'confirm') demoConfirm();
+  else if (d === 'compare') demoCompare();
   else if (d) demo();
 });
