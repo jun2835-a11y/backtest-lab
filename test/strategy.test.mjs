@@ -70,4 +70,21 @@ t('expenseRatio가 노출 구간 총수익을 낮춘다', () => {
   eq(a, b, '현금 구간엔 보수 미부과');
 });
 
+// ── 거래비용: 변동성 비례 슬리피지 ──
+t('변동성 큰 종목이 회전당 비용을 더 낸다', () => {
+  const mk = (amp) => { const b = []; let p = 100; for (let i = 0; i < 300; i++) { p *= 1 + amp * (i % 2 ? 1 : -1) + 0.001; b.push({ t: i * 86400, iso: 'x', close: p }); } return b; };
+  const pos = new Array(300).fill(0).map((_, i) => (i % 20 < 10 ? 1 : 0)); // 규칙적 회전
+  const lowVol = runBacktest(mk(0.003), pos, { halfSpreadBps: 2, slippageVolMult: 0.05 }).metrics;
+  const highVol = runBacktest(mk(0.03), pos, { halfSpreadBps: 2, slippageVolMult: 0.05 }).metrics;
+  assert(lowVol.turns === highVol.turns, '회전 수 동일');
+  assert(highVol.avgTurnBps > lowVol.avgTurnBps, '고변동일수록 회전당 비용 큼');
+});
+
+t('슬리피지 계수 0이면 스프레드만 부과', () => {
+  const b = []; let p = 100; for (let i = 0; i < 200; i++) { p *= 1.002 * (i % 2 ? 1.01 : 0.99); b.push({ t: i * 86400, iso: 'x', close: p }); }
+  const pos = b.map((_, i) => (i % 10 < 5 ? 1 : 0));
+  const m = runBacktest(b, pos, { halfSpreadBps: 3, slippageVolMult: 0 }).metrics;
+  assert(Math.abs(m.avgTurnBps - 3) < 1e-6, `편도 ≈3bps (got ${m.avgTurnBps})`);
+});
+
 console.log(`\n${pass} passed`);

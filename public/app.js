@@ -238,9 +238,10 @@ function renderSimpleResult(res) {
     후보를 많이 돌릴수록 <b>우연히 QUANT가 나올 확률</b>이 커집니다. 아래 각 종목의 <b>OOS·랜덤대조·신뢰구간</b>으로 우연 여부를 판별하세요.`;
   body.appendChild(mc);
 
-  const turn = rows.find((r) => r.strat)?.strat?.costModel?.turnCost ?? 0.0005;
+  const cm = rows.find((r) => r.strat)?.strat?.costModel;
+  const costDesc = cm ? `반스프레드 ${cm.halfSpreadBps}bps + 변동성비례 슬리피지(일변동성 × ${cm.slippageVolMult})` : '스프레드+슬리피지';
   const prov = el('div', 'provenance',
-    `데이터: Yahoo 조정종가 <b>(배당·분할 반영 net-of-fee)</b> · 비용: 거래 왕복 ${(turn * 10000).toFixed(0)}bps(고정 — 레버리지 ETF 실제 스프레드/슬리피지는 더 클 수 있음) · 신호 T+1 · 판정: 매수후보유 대비 칼마` +
+    `데이터: Yahoo 조정종가 <b>(배당·분할 반영 net-of-fee)</b> · 거래비용: <b>${costDesc}</b>, 회전마다 편도 부과 — 변동성 큰 레버리지 ETF일수록 자동으로 비싸짐 · 신호 T+1 · 판정: 매수후보유 대비 칼마` +
     `<br>⚠ <b>생존 편향</b>: 지금 보이는 건 <u>살아남은 종목</u>뿐입니다. 청산된 3배 ETF 다수는 표본에 없어 결과가 낙관적으로 치우칠 수 있습니다.`);
   body.appendChild(prov);
 
@@ -252,7 +253,7 @@ function renderSimpleResult(res) {
       <div>버전: <code>${rc.version}</code></div>
       <div>실행 시각(UTC): <code>${rc.ranAt}</code></div>
       <div>데이터: ${rc.dataSource}</div>
-      <div>비용 모델: 거래 ${(rc.costModel.turnCost * 10000).toFixed(0)}bps · 운용보수 ${rc.costModel.expenseRatio === 0 ? '가격 반영(0 추가)' : rc.costModel.expenseRatio}</div>
+      <div>거래비용: 수수료 ${rc.costModel.commissionBps}bps + 반스프레드 ${rc.costModel.halfSpreadBps}bps + 슬리피지(일변동성 × ${rc.costModel.slippageVolMult}) · 편도, 회전마다 · 운용보수 가격 반영</div>
       <div>통계: 부트스트랩 ${rc.iters.bootstrap}회(블록20) · 랜덤대조 ${rc.iters.control}회 · OOS train ${Math.round(rc.iters.oosTrainFrac * 100)}%</div>
       <div>집행: ${rc.execution}</div>
       <div class="rc-note">동일 입력 → 동일 결과(시드 고정). 위 스펙 JSON은 해석 확인 단계에서 복사·저장할 수 있습니다.</div>
@@ -312,7 +313,8 @@ function simpleCard(r) {
           <div class="sb-hint">${r.verdict.state === 'weak' ? '베이스만 이기고 확증이 부족 → 확언 못 함(QUANT?)' : r.verdict.state === 'quant' ? '다차원 확증 충족' : r.verdict.state === 'push' ? '매수후보유와 근소차' : '베이스 미달'}</div>
         </div>
       </div>
-      <div style="color:var(--faint);font-size:10.5px;margin-top:8px">${r.strat.from} → ${r.strat.to} · ${r.strat.bars}봉 · 노출 ${fmtPct(r.strat.exposure)}</div>
+      <div class="cost-line">실현 거래비용: 회전 <b>${r.strat.turns}회</b> · 평균 <b>${r.strat.avgTurnBps.toFixed(1)}bps</b>/편도 · 총 <b>−${(r.strat.costPaid * 100).toFixed(2)}%p</b> 차감</div>
+      <div style="color:var(--faint);font-size:10.5px;margin-top:6px">${r.strat.from} → ${r.strat.to} · ${r.strat.bars}봉 · 노출 ${fmtPct(r.strat.exposure)}</div>
     </div>`;
   return card;
 }

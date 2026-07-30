@@ -85,6 +85,8 @@ app.post('/api/simple', async (req, res) => {
     const from = body.from || `${new Date().getUTCFullYear() - 10}-01-01`;
 
     const BOOT = 300, CONTROL = 200;
+    // 거래비용 모델: 스프레드 + 변동성비례 슬리피지(레버리지 ETF 현실화).
+    const costOpts = { commissionBps: 0, halfSpreadBps: 2, slippageVolMult: 0.05, volWindow: 20 };
     const rows = [];
     for (const t of tickers) {
       try {
@@ -92,24 +94,24 @@ app.post('/api/simple', async (req, res) => {
         if (!bars || bars.length < 120) { rows.push({ ticker: t, name, error: '데이터 부족(통계 검정에 최소 ~120봉 필요)' }); continue; }
         const closes = bars.map((b) => b.close);
         const pos = positionsFor(spec, closes, chosen);
-        const run = runBacktest(bars, pos);
+        const run = runBacktest(bars, pos, costOpts);
         const strat = run.metrics;
-        const bh = buyHold(bars).metrics;
+        const bh = buyHold(bars, costOpts).metrics;
 
         // 재현성: 종목+스펙+기간으로 시드 고정.
         const rng = mulberry32(hashStr(`${t}|${JSON.stringify(spec)}|${from}|${to}`));
 
         // OOS 분리: 앞 60% train, 뒤 40% test (같은 포지션 규칙, 룩어헤드 없음).
         const k = oosSplitIndex(bars.length, 0.6);
-        const trainStrat = runBacktest(bars.slice(0, k), pos.slice(0, k)).metrics;
-        const trainBH = buyHold(bars.slice(0, k)).metrics;
-        const testStrat = runBacktest(bars.slice(k), pos.slice(k)).metrics;
-        const testBH = buyHold(bars.slice(k)).metrics;
+        const trainStrat = runBacktest(bars.slice(0, k), pos.slice(0, k), costOpts).metrics;
+        const trainBH = buyHold(bars.slice(0, k), costOpts).metrics;
+        const testStrat = runBacktest(bars.slice(k), pos.slice(k), costOpts).metrics;
+        const testBH = buyHold(bars.slice(k), costOpts).metrics;
 
         // 블록 부트스트랩 칼마 신뢰구간.
         const calmarCI = bootstrapCalmarCI(equityToReturns(run.equity), { block: 20, iters: BOOT, rng });
-        // 타이밍 셔플 랜덤대조.
-        const control = timingShuffleControl(bars, pos, strat.calmar, { iters: CONTROL, rng });
+        // 타이밍 셔플 랜덤대조(같은 비용 모델).
+        const control = timingShuffleControl(bars, pos, strat.calmar, { iters: CONTROL, rng, opts: costOpts });
 
         // 다차원 신뢰: 베이스 우위 + (OOS 유지 / 랜덤 초과 / CI 양수) 확증 수.
         const baseBeat = strat.calmar > bh.calmar;
@@ -143,7 +145,7 @@ app.post('/api/simple', async (req, res) => {
       version: APP_VERSION,
       ranAt: new Date().toISOString(),
       dataSource: 'Yahoo Finance 조정종가(net-of-fee)',
-      costModel: { turnCost: 0.0005, expenseRatio: 0 },
+      costModel: costOpts,
       iters: { bootstrap: BOOT, control: CONTROL, oosTrainFrac: 0.6 },
       execution: 'T+1 · 100% 또는 현금',
     };
