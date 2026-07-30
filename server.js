@@ -87,6 +87,22 @@ app.post('/api/simple', async (req, res) => {
     const BOOT = 300, CONTROL = 200;
     // 거래비용 모델: 스프레드 + 변동성비례 슬리피지(레버리지 ETF 현실화).
     const costOpts = { commissionBps: 0, halfSpreadBps: 2, slippageVolMult: 0.05, volWindow: 20 };
+
+    // 벤치마크: self(자기 매수후보유) / spy(SPY 보유) / cash(현금 0%).
+    let benchKind = ['self', 'spy', 'cash'].includes(body.benchmark) ? body.benchmark : 'self';
+    let benchLabel = { self: '자기 매수후보유', spy: 'SPY 보유', cash: '현금 0%' }[benchKind];
+    let spyFull = null, spyTest = null, benchNote = '';
+    if (benchKind === 'spy') {
+      try {
+        const { bars: sb } = await getFree('SPY', from, to);
+        if (sb && sb.length >= 120) {
+          spyFull = buyHold(sb, costOpts).metrics;
+          spyTest = buyHold(sb.slice(oosSplitIndex(sb.length, 0.6)), costOpts).metrics;
+        } else throw new Error('SPY 데이터 부족');
+      } catch (e) { benchKind = 'self'; benchLabel = '자기 매수후보유'; benchNote = 'SPY 벤치마크 조회 실패 → 자기 매수후보유로 대체'; }
+    }
+    const cashMetrics = { calmar: 0, cagr: 0, mdd: 0, sharpe: 0, exposure: 0, totalReturn: 0 };
+
     const rows = [];
     for (const t of tickers) {
       try {
@@ -114,14 +130,18 @@ app.post('/api/simple', async (req, res) => {
         // 타이밍 셔플 랜덤대조(같은 비용 모델).
         const control = timingShuffleControl(bars, pos, strat.calmar, { iters: CONTROL, rng, opts: costOpts });
 
+        // 판정 기준 벤치마크 선택.
+        const bench = benchKind === 'spy' ? spyFull : benchKind === 'cash' ? cashMetrics : bh;
+        const benchT = benchKind === 'spy' ? spyTest : benchKind === 'cash' ? cashMetrics : testBH;
+
         // 다차원 신뢰: 베이스 우위 + (OOS 유지 / 랜덤 초과 / CI 양수) 확증 수.
-        const baseBeat = strat.calmar > bh.calmar;
-        const oosBeat = testStrat.calmar > testBH.calmar;
+        const baseBeat = strat.calmar > bench.calmar;
+        const oosBeat = testStrat.calmar > benchT.calmar;
         const vsRandom = control ? control.percentile >= 0.90 : false;
         const ciPositive = calmarCI ? calmarCI.lo > 0 : false;
         const corrob = [oosBeat, vsRandom, ciPositive].filter(Boolean).length;
-        const denom = Math.abs(bh.calmar) > 1e-9 ? Math.abs(bh.calmar) : 1;
-        const nearTie = Math.abs((strat.calmar - bh.calmar) / denom) <= 0.10;
+        const denom = Math.abs(bench.calmar) > 1e-9 ? Math.abs(bench.calmar) : 1;
+        const nearTie = Math.abs((strat.calmar - bench.calmar) / denom) <= 0.10;
 
         let state, label2;
         if (!baseBeat) { state = 'cut'; label2 = 'NOT-QUANT'; }
@@ -137,6 +157,7 @@ app.post('/api/simple', async (req, res) => {
 
         rows.push({
           ticker: t, name, strat, bh,
+          bench: benchKind === 'self' ? null : { kind: benchKind, label: benchLabel, calmar: bench.calmar, cagr: bench.cagr, mdd: bench.mdd },
           verdict: { state, label: label2 },
           oos: { split: bars[k].iso, splitIdx: k, train: { strat: trainStrat, bh: trainBH }, test: { strat: testStrat, bh: testBH } },
           calmarCI, control,
@@ -156,8 +177,9 @@ app.post('/api/simple', async (req, res) => {
       costModel: costOpts,
       iters: { bootstrap: BOOT, control: CONTROL, oosTrainFrac: 0.6 },
       execution: 'T+1 · 100% 또는 현금',
+      benchmark: benchLabel,
     };
-    res.json({ ok: true, result: { rows, summary: { counts, total: rows.length }, spec: { type: spec.type, label, chosenParam: chosen }, from, to, runCard } });
+    res.json({ ok: true, result: { rows, summary: { counts, total: rows.length }, spec: { type: spec.type, label, chosenParam: chosen }, from, to, runCard, benchmark: { kind: benchKind, label: benchLabel, note: benchNote } } });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: String(e.message || e) });

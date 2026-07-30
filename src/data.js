@@ -24,33 +24,58 @@ function isoToTs(iso) {
   return Math.floor(new Date(iso + 'T00:00:00Z').getTime() / 1000);
 }
 
-// Yahoo v8 chart API에서 조정종가 일봉을 가져온다. → [{t, iso, close}]
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function fetchWithTimeout(url, ms) {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), ms);
+  try {
+    return await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (backtest-lab)' }, signal: ac.signal });
+  } finally { clearTimeout(timer); }
+}
+
+// Yahoo v8 chart API에서 조정종가 일봉. 타임아웃·재시도·호스트 폴백으로 견고화. → [{t, iso, close}]
 async function fetchYahoo(symbol, period1, period2) {
   const enc = encodeURIComponent(symbol);
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${enc}` +
-    `?period1=${period1}&period2=${period2}&interval=1d&events=div%2Csplit`;
-  const res = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (backtest-lab)' },
-  });
-  if (!res.ok) throw new Error(`Yahoo ${symbol} HTTP ${res.status}`);
-  const json = await res.json();
-  const r = json?.chart?.result?.[0];
-  if (!r || !r.timestamp) throw new Error(`Yahoo ${symbol}: 데이터 없음`);
-  const ts = r.timestamp;
-  // 조정종가 우선(배당·분할 반영), 없으면 종가.
-  const adj = r.indicators?.adjclose?.[0]?.adjclose;
-  const close = r.indicators?.quote?.[0]?.close;
-  const px = adj || close;
-  const bars = [];
-  for (let i = 0; i < ts.length; i++) {
-    const c = px[i];
-    if (c == null || !isFinite(c)) continue;
-    const iso = new Date(ts[i] * 1000).toISOString().slice(0, 10);
-    bars.push({ t: ts[i], iso, close: c });
+  const path = `/v8/finance/chart/${enc}?period1=${period1}&period2=${period2}&interval=1d&events=div%2Csplit`;
+  const hosts = ['https://query1.finance.yahoo.com', 'https://query2.finance.yahoo.com'];
+  const ATTEMPTS = 3, TIMEOUT = 12000;
+  let lastErr;
+
+  for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+    const host = hosts[attempt % hosts.length]; // 호스트 폴백(query1↔query2)
+    try {
+      const res = await fetchWithTimeout(host + path, TIMEOUT);
+      if (res.status === 429 || res.status >= 500) { // 레이트리밋/서버오류 → 백오프 재시도
+        lastErr = new Error(`Yahoo ${symbol} HTTP ${res.status}`);
+        await sleep(400 * (attempt + 1)); continue;
+      }
+      if (res.status === 404) throw new Error(`종목 '${symbol}'을(를) 찾지 못했습니다(심볼 확인).`);
+      if (!res.ok) throw new Error(`Yahoo ${symbol} HTTP ${res.status}`);
+      const json = await res.json();
+      const r = json?.chart?.result?.[0];
+      if (!r || !r.timestamp) throw new Error(`'${symbol}': 데이터 없음(심볼/기간 확인).`);
+      const ts = r.timestamp;
+      const adj = r.indicators?.adjclose?.[0]?.adjclose; // 조정종가 우선(배당·분할 반영)
+      const close = r.indicators?.quote?.[0]?.close;
+      const px = adj || close;
+      const bars = [];
+      for (let i = 0; i < ts.length; i++) {
+        const c = px[i];
+        if (c == null || !isFinite(c)) continue;
+        bars.push({ t: ts[i], iso: new Date(ts[i] * 1000).toISOString().slice(0, 10), close: c });
+      }
+      bars.name = r.meta?.shortName || r.meta?.symbol || symbol;
+      bars.currency = r.meta?.currency || '';
+      return bars;
+    } catch (e) {
+      lastErr = e;
+      if (/찾지 못했|데이터 없음/.test(e.message)) throw e; // 영구 오류는 재시도 안 함
+      if (attempt < ATTEMPTS - 1) { await sleep(400 * (attempt + 1)); continue; }
+    }
   }
-  bars.name = r.meta?.shortName || r.meta?.symbol || symbol; // 종목명(자유 모드 표시용)
-  bars.currency = r.meta?.currency || '';
-  return bars;
+  const aborted = lastErr && lastErr.name === 'AbortError';
+  throw new Error(aborted ? `'${symbol}' 응답 시간 초과(네트워크/야후 지연).` : (lastErr?.message || `Yahoo ${symbol} 실패`));
 }
 
 async function cached(key, loader) {

@@ -51,7 +51,7 @@ function initSimpleMode() {
     if (!PENDING) return;
     $('#s-confirm-panel').classList.add('hidden');
     saveSpec(PENDING);
-    runWith(PENDING.tickers, PENDING.strategy, PENDING.from, PENDING.to);
+    runWith(PENDING.tickers, PENDING.strategy, PENDING.from, PENDING.to, PENDING.benchmark);
   };
   $('#s-confirm-cancel').onclick = () => $('#s-confirm-panel').classList.add('hidden');
 
@@ -60,13 +60,65 @@ function initSimpleMode() {
   if (saved) {
     const b = $('#s-rerun');
     b.classList.remove('hidden');
-    b.onclick = () => { PENDING = saved; runWith(saved.tickers, saved.strategy, saved.from, saved.to); };
+    b.onclick = () => { PENDING = saved; runWith(saved.tickers, saved.strategy, saved.from, saved.to, saved.benchmark); };
   }
 }
 
 // ── 스펙 저장/로드(재현성) ──
 function saveSpec(p) { try { localStorage.setItem('bt_last_spec', JSON.stringify(p)); } catch (e) {} }
 function loadSpec() { try { return JSON.parse(localStorage.getItem('bt_last_spec')); } catch (e) { return null; } }
+
+// ── 내보내기: CSV·JSON·공유 링크 ──
+function download(filename, text, mime) {
+  const blob = new Blob([text], { type: mime || 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+const csvCell = (v) => { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+function exportCSV(res) {
+  const head = ['ticker', 'name', 'verdict', 'strat_cagr', 'strat_mdd', 'strat_calmar', 'strat_sharpe', 'exposure', 'bh_calmar', 'bench_calmar', 'oos_test_strat_calmar', 'oos_test_bh_calmar', 'calmarCI_lo', 'calmarCI_hi', 'random_pctile', 'corrob', 'turns', 'avgTurnBps', 'costPaid_pct'];
+  const lines = [head.join(',')];
+  for (const r of res.rows) {
+    if (r.error) { lines.push([r.ticker, r.name, 'ERROR:' + r.error].map(csvCell).join(',')); continue; }
+    const row = [r.ticker, r.name, r.verdict.label, r.strat.cagr, r.strat.mdd, r.strat.calmar, r.strat.sharpe, r.strat.exposure,
+      r.bh.calmar, r.bench ? r.bench.calmar : r.bh.calmar, r.oos.test.strat.calmar, r.oos.test.bh.calmar,
+      r.calmarCI ? r.calmarCI.lo : '', r.calmarCI ? r.calmarCI.hi : '', r.control ? r.control.percentile : '',
+      r.checks.corrob, r.strat.turns, r.strat.avgTurnBps, r.strat.costPaid * 100];
+    lines.push(row.map(csvCell).join(','));
+  }
+  download(`backtest_${res.from}_${res.to}.csv`, '﻿' + lines.join('\n'), 'text/csv;charset=utf-8');
+}
+function exportJSON() {
+  if (!LAST_RESULT) return;
+  download(`backtest_${LAST_RESULT.input.from}_${LAST_RESULT.input.to}.json`, JSON.stringify(LAST_RESULT, null, 2), 'application/json');
+}
+function b64encode(str) { return btoa(unescape(encodeURIComponent(str))); }
+function b64decode(str) { return decodeURIComponent(escape(atob(str))); }
+function exportShare() {
+  if (!LAST_RESULT) return;
+  const code = b64encode(JSON.stringify(LAST_RESULT.input));
+  const url = `${location.origin}${location.pathname}#run=${code}`;
+  const st = $('#exp-status');
+  navigator.clipboard?.writeText(url).then(() => { if (st) st.textContent = '링크 복사됨 ✓ (열면 동일 입력으로 재실행)'; },
+    () => { if (st) st.innerHTML = `<input value="${url}" readonly style="width:60%">`; });
+}
+// 공유 링크로 열렸을 때 동일 입력 재실행.
+function tryShareLink() {
+  const m = (location.hash || '').match(/run=([^&]+)/);
+  if (!m) return false;
+  try {
+    const input = JSON.parse(b64decode(m[1]));
+    $('.mode-switch .ms[data-mode="simple"]').click();
+    if (input.tickers) $('#s-tickers').value = input.tickers.join(', ');
+    if (input.benchmark) $('#s-benchmark').value = input.benchmark;
+    $('#s-nl').value = input.strategy?.label || '(공유된 스펙 실행)';
+    PENDING = { strategy: input.strategy, tickers: input.tickers, from: input.from, to: input.to, benchmark: input.benchmark };
+    runWith(input.tickers, input.strategy, input.from, input.to, input.benchmark);
+    return true;
+  } catch (e) { return false; }
+}
 
 // 기간 프리셋 → from/to
 function periodRange() {
@@ -107,9 +159,11 @@ async function runSimple() {
   const tk = $('#s-tickers').value.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
   const tickers = tk.length ? tk : typed;
   if (!tickers.length) { $('#s-status').innerHTML = '<span class="err">종목을 입력하세요. (또는 문장에 종목 포함)</span>'; return; }
-  PENDING = { strategy: spec.strategy, tickers, from, to, notes: spec.notes, engine: spec.engine, downgraded: spec.downgraded, downgradeNote: spec.downgradeNote };
+  const benchmark = $('#s-benchmark').value;
+  PENDING = { strategy: spec.strategy, tickers, from, to, benchmark, notes: spec.notes, engine: spec.engine, downgraded: spec.downgraded, downgradeNote: spec.downgradeNote };
   renderConfirm(PENDING);
 }
+const BENCH_KO = { self: '자기 매수후보유', spy: 'SPY 보유', cash: '현금 (0%)' };
 
 // ── 스펙을 사람이 읽는 말로 ──
 const OP_KO = { '>': '초과', '<': '미만', '>=': '이상', '<=': '이하', '==': '같음', 'cross_up': '상향돌파', 'cross_down': '하향돌파' };
@@ -162,6 +216,7 @@ function renderConfirm(p) {
     <div class="spec-line"><span class="k">종목</span><span class="v">${p.tickers.join(', ')}</span></div>
     <div class="spec-line"><span class="k">기간</span><span class="v">${p.from} ~ ${p.to}</span></div>
     <div class="spec-line"><span class="k">전략</span><span class="v">${descStrategy(p.strategy)}</span></div>
+    <div class="spec-line"><span class="k">판정 기준</span><span class="v">${BENCH_KO[p.benchmark] || '자기 매수후보유'} 대비 위험대비수익(칼마)</span></div>
     <div class="assump">
       <div class="assump-t">고정 가정 (모두 명시)</div>
       <ul>
@@ -183,7 +238,8 @@ function renderConfirm(p) {
   panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-async function runWith(tickers, strategy, from, to) {
+let LAST_RESULT = null; // 내보내기용
+async function runWith(tickers, strategy, from, to, benchmark) {
   const body = $('#s-result-body');
   $('#s-result-panel').classList.remove('hidden');
   $('#s-result-panel').classList.add('reveal');
@@ -193,9 +249,10 @@ async function runWith(tickers, strategy, from, to) {
   try {
     const r = await (await fetch('/api/simple', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tickers, strategy, from, to }),
+      body: JSON.stringify({ tickers, strategy, from, to, benchmark: benchmark || 'self' }),
     })).json();
     if (!r.ok) throw new Error(r.error || '실행 실패');
+    LAST_RESULT = { result: r.result, input: { tickers, strategy, from, to, benchmark: benchmark || 'self' } };
     renderSimpleResult(r.result);
   } catch (e) {
     body.innerHTML = `<div class="err">실행 오류: ${e.message}</div>`;
@@ -216,9 +273,10 @@ function renderSimpleResult(res) {
   const leftW = Math.max(6, ...rows.map((r) => r.ticker.length));
   const c = res.summary.counts;
 
+  const benchLabel = res.benchmark?.label || '자기 매수후보유';
   const board = el('div', 'board wideboard');
   board.innerHTML = `
-    <div class="board-caption"><span class="eyebrow">BACK TEST</span><span class="strat">${res.spec.label || res.spec.type} · ${res.from}~${res.to}</span></div>
+    <div class="board-caption"><span class="eyebrow">BACK TEST</span><span class="strat">${res.spec.label || res.spec.type} · ${res.from}~${res.to} · 기준 ${benchLabel}</span></div>
     <div class="board-cols"><div>Ticker</div><div>Verdict</div></div>
     <div class="board-rows"></div>`;
   const rowsEl = board.querySelector('.board-rows');
@@ -237,6 +295,23 @@ function renderSimpleResult(res) {
   mc.innerHTML = `⚠ <b>다중비교 주의</b> — 이번 실행에서 ${M}개 종목을 동시 검정했고, 이 브라우저에서 누적 <b>${session}회</b> 테스트했습니다.
     후보를 많이 돌릴수록 <b>우연히 QUANT가 나올 확률</b>이 커집니다. 아래 각 종목의 <b>OOS·랜덤대조·신뢰구간</b>으로 우연 여부를 판별하세요.`;
   body.appendChild(mc);
+
+  if (res.benchmark?.note) {
+    const bn = el('div', 'downgrade-banner', `⚠ ${res.benchmark.note}`);
+    body.appendChild(bn);
+  }
+
+  // 내보내기 도구모음
+  const bar = el('div', 'export-bar');
+  bar.innerHTML = `<span class="eb-label">내보내기</span>
+    <button class="btn ghost" id="exp-csv">CSV</button>
+    <button class="btn ghost" id="exp-json">JSON</button>
+    <button class="btn ghost" id="exp-share">공유 링크 복사</button>
+    <span id="exp-status"></span>`;
+  body.appendChild(bar);
+  $('#exp-csv').onclick = () => exportCSV(res);
+  $('#exp-json').onclick = () => exportJSON();
+  $('#exp-share').onclick = () => exportShare();
 
   const cm = rows.find((r) => r.strat)?.strat?.costModel;
   const costDesc = cm ? `반스프레드 ${cm.halfSpreadBps}bps + 변동성비례 슬리피지(일변동성 × ${cm.slippageVolMult})` : '스프레드+슬리피지';
@@ -326,7 +401,7 @@ function simpleCard(r) {
       <span class="verdict-tag ${tagCls}">${r.verdict.label}</span>
     </div>
     <div class="tc-body open">
-      ${metricsTable(metricRow('전략(전체)', r.strat, 'strat', r.bh) + metricRow('매수후보유', r.bh, 'bh', null))}
+      ${metricsTable(metricRow('전략(전체)', r.strat, 'strat', r.bh) + metricRow('매수후보유', r.bh, 'bh', null) + (r.bench ? metricRow('기준: ' + r.bench.label, r.bench, 'bh', null) : ''))}
       ${equityChartSVG(r.chart, r.oos.splitIdx)}
       <div class="stat-grid">
         <div class="stat-box">
@@ -758,6 +833,7 @@ async function demoConfirm() {
   await runSimple(); // 해석 확인에서 멈춤
 }
 boot().then(() => {
+  if (tryShareLink()) return;
   const d = new URLSearchParams(location.search).get('demo');
   if (d === 'simple') demoSimple();
   else if (d === 'confirm') demoConfirm();
