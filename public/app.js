@@ -404,12 +404,14 @@ function equityChartSVG(chart, oosIdx) {
   const pts = chart?.pts, n = chart?.n;
   if (!pts || pts.length < 2) return '';
   const W = 720, padL = 48, padR = 14, eqTop = 14, eqBot = 150, ddTop = 178, ddBot = 248;
+  const trades = chart.trades || [];
   let lmin = Infinity, lmax = -Infinity, maxDd = 0;
   for (const p of pts) {
     const s = Math.log(Math.max(p.s, 1e-6)), b = Math.log(Math.max(p.b, 1e-6));
     if (s < lmin) lmin = s; if (b < lmin) lmin = b; if (s > lmax) lmax = s; if (b > lmax) lmax = b;
     if (p.d > maxDd) maxDd = p.d;
   }
+  for (const tr of trades) { const l = Math.log(Math.max(tr.eq, 1e-6)); if (l < lmin) lmin = l; if (l > lmax) lmax = l; }
   const span = (lmax - lmin) || 1;
   const xOf = (i) => padL + (i / (n - 1)) * (W - padL - padR);
   const yEq = (v) => eqBot - (Math.log(Math.max(v, 1e-6)) - lmin) / span * (eqBot - eqTop);
@@ -418,6 +420,13 @@ function equityChartSVG(chart, oosIdx) {
   const ddPath = `M ${xOf(pts[0].i).toFixed(1)},${ddTop} ` + pts.map((p) => `L ${xOf(p.i).toFixed(1)},${yDd(p.d).toFixed(1)}`).join(' ') + ` L ${xOf(pts[pts.length - 1].i).toFixed(1)},${ddTop} Z`;
   const oosX = xOf(oosIdx).toFixed(1);
   const mult = (lg) => '×' + Math.exp(lg).toFixed(Math.exp(lg) >= 10 ? 0 : 1);
+  // 매수(진입) ▲ / 매도(청산) ▼ 마커.
+  let buys = 0, sells = 0;
+  const marks = trades.map((tr) => {
+    const x = xOf(tr.i), y = yEq(tr.eq);
+    if (tr.type === 'buy') { buys++; return `<path class="mk buy" d="M${(x - 3.4).toFixed(1)},${(y + 6).toFixed(1)} L${(x + 3.4).toFixed(1)},${(y + 6).toFixed(1)} L${x.toFixed(1)},${(y + 0.5).toFixed(1)} Z"><title>매수 ${tr.iso}</title></path>`; }
+    sells++; return `<path class="mk sell" d="M${(x - 3.4).toFixed(1)},${(y - 6).toFixed(1)} L${(x + 3.4).toFixed(1)},${(y - 6).toFixed(1)} L${x.toFixed(1)},${(y - 0.5).toFixed(1)} Z"><title>매도 ${tr.iso}</title></path>`;
+  }).join('');
   return `<svg class="eqchart" viewBox="0 0 ${W} 260" preserveAspectRatio="xMidYMid meet">
     <line class="grid" x1="${padL}" y1="${eqBot}" x2="${W - padR}" y2="${eqBot}"/>
     <text class="lab" x="4" y="${eqTop + 8}">${mult(lmax)}</text>
@@ -427,10 +436,13 @@ function equityChartSVG(chart, oosIdx) {
     <path class="ddarea" d="${ddPath}"/>
     <polyline class="bh" points="${line('b')}"/>
     <polyline class="strat" points="${line('s')}"/>
+    ${marks}
     <line class="oos" x1="${oosX}" y1="${eqTop}" x2="${oosX}" y2="${ddBot}"/>
     <text class="oos-lab" x="${oosX}" y="${eqTop - 3}">OOS→</text>
     <text class="leg strat-l" x="${W - padR}" y="${eqTop + 8}">— 전략</text>
     <text class="leg bh-l" x="${W - padR - 66}" y="${eqTop + 8}">— 매수후보유</text>
+    <text class="leg buy-l" x="${padL + 2}" y="${eqTop + 8}">▲ 매수 ${buys}</text>
+    <text class="leg sell-l" x="${padL + 74}" y="${eqTop + 8}">▼ 매도 ${sells}</text>
   </svg>`;
 }
 

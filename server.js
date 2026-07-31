@@ -154,6 +154,11 @@ app.post('/api/simple', async (req, res) => {
         const pts = [];
         for (let i = 0; i < N; i += stride) pts.push({ i, s: run.equity[i], b: bhRun.equity[i], d: run.drawdown[i] });
         if (pts[pts.length - 1].i !== N - 1) pts.push({ i: N - 1, s: run.equity[N - 1], b: bhRun.equity[N - 1], d: run.drawdown[N - 1] });
+        // 매수(진입)·매도(청산) 시점 — 포지션 변경일. 신호 T+1 집행이므로 그 봉의 iso 표기.
+        const trades = [];
+        for (let i = 1; i < N; i++) {
+          if (pos[i] !== pos[i - 1]) trades.push({ i, type: pos[i] > pos[i - 1] ? 'buy' : 'sell', eq: run.equity[i], iso: bars[i].iso });
+        }
 
         rows.push({
           ticker: t, name, strat, bh,
@@ -162,7 +167,7 @@ app.post('/api/simple', async (req, res) => {
           oos: { split: bars[k].iso, splitIdx: k, train: { strat: trainStrat, bh: trainBH }, test: { strat: testStrat, bh: testBH } },
           calmarCI, control,
           checks: { baseBeat, oosBeat, vsRandom, ciPositive, corrob },
-          chart: { pts, n: N, from: bars[0].iso, to: bars[N - 1].iso },
+          chart: { pts, n: N, from: bars[0].iso, to: bars[N - 1].iso, trades },
         });
       } catch (e) {
         rows.push({ ticker: t, error: String(e.message || e).slice(0, 100) });
