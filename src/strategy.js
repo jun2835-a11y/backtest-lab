@@ -4,6 +4,7 @@
 // 신호는 룩어헤드를 피하기 위해 1봉 지연 체결(전일 지표로 오늘 포지션 결정).
 
 import { sma, ema, rollingVol, returns, rsi, macd, bollinger, rollingHigh, rollingLow, roc } from './indicators.js';
+import { applyExecution, execActive } from './execution.js';
 
 // 지원 전략 타입 카탈로그. 각 타입은 grid 파라미터의 기본 그리드를 가진다.
 export const STRATEGY_TYPES = {
@@ -30,7 +31,7 @@ export const STRATEGY_TYPES = {
 // 한 봉 지연 적용: raw[i]는 i봉 종가 기준 판정 → 실제 포지션은 i+1부터 적용.
 function lag(raw) {
   const out = new Array(raw.length).fill(0);
-  for (let i = 1; i < raw.length; i++) out[i] = raw[i - 1] ? 1 : 0;
+  for (let i = 1; i < raw.length; i++) out[i] = raw[i - 1]; // 값 보존(분수 사이징 지원)
   return out;
 }
 
@@ -79,11 +80,10 @@ function evalCond(c, i, series) {
   return false;
 }
 
-export function evalRuleStrategy(spec, closes) {
+// 규칙 전략의 원시(무지연) 신호 0/1.
+export function evalRuleRaw(spec, closes) {
   const cache = new Map();
   const series = (op) => { const k = JSON.stringify(op); if (cache.has(k)) return cache.get(k); const s = resolveOperand(op, closes); cache.set(k, s); return s; };
-
-  // 진입/청산 이벤트 쌍(cross_up 진입 → cross_down 청산 등): 사이 구간을 보유로 유지.
   if (spec.entry || spec.exit) {
     const raw = new Array(closes.length).fill(0);
     let pos = 0;
@@ -92,41 +92,44 @@ export function evalRuleStrategy(spec, closes) {
       else if (pos === 1 && spec.exit && evalCond(spec.exit, i, series)) pos = 0;
       raw[i] = pos;
     }
-    return lag(raw);
+    return raw;
   }
-
-  // 상태 조건: 참인 구간만 보유.
   const cond = spec.long || spec.rule || spec.condition || spec;
-  const raw = closes.map((_, i) => (evalCond(cond, i, series) ? 1 : 0));
-  return lag(raw);
+  return closes.map((_, i) => (evalCond(cond, i, series) ? 1 : 0));
 }
+export const evalRuleStrategy = (spec, closes) => lag(evalRuleRaw(spec, closes));
 
-// spec + 그리드 값 하나 → 포지션 배열.
-export function positionsFor(spec, closes, paramValue) {
+// 전략 타입 → 원시(무지연) 롱 신호 0/1. (집행 오버레이가 이 위에 얹힘)
+export function rawSignalFor(spec, closes, paramValue) {
   const type = spec.type;
-  if (type === 'rule') return evalRuleStrategy(spec, closes);
+  if (type === 'rule') return evalRuleRaw(spec, closes);
   if (type === 'ma_timing') {
-    const p = paramValue;
-    const line = (spec.maType || 'sma') === 'ema' ? ema(closes, p) : sma(closes, p);
-    const raw = closes.map((c, i) => (line[i] != null && c > line[i]) ? 1 : 0);
-    return lag(raw);
+    const line = (spec.maType || 'sma') === 'ema' ? ema(closes, paramValue) : sma(closes, paramValue);
+    return closes.map((c, i) => (line[i] != null && c > line[i]) ? 1 : 0);
   }
   if (type === 'dual_ma') {
-    const fast = spec.fast || 50;
-    const slow = paramValue;
+    const fast = spec.fast || 50, slow = paramValue;
     const f = (spec.maType || 'sma') === 'ema' ? ema(closes, fast) : sma(closes, fast);
     const s = (spec.maType || 'sma') === 'ema' ? ema(closes, slow) : sma(closes, slow);
-    const raw = closes.map((_, i) => (f[i] != null && s[i] != null && f[i] > s[i]) ? 1 : 0);
-    return lag(raw);
+    return closes.map((_, i) => (f[i] != null && s[i] != null && f[i] > s[i]) ? 1 : 0);
   }
   if (type === 'vol_target') {
-    const w = spec.window || 20;
-    const cap = paramValue;
-    const vol = rollingVol(returns(closes), w);
-    const raw = closes.map((_, i) => (vol[i] != null && vol[i] < cap) ? 1 : 0);
-    return lag(raw);
+    const vol = rollingVol(returns(closes), spec.window || 20);
+    return closes.map((_, i) => (vol[i] != null && vol[i] < paramValue) ? 1 : 0);
   }
   throw new Error(`알 수 없는 전략 타입: ${type}`);
+}
+
+// spec + 그리드 값 하나 → (지연 적용) 포지션 배열. 집행 오버레이 없음(정밀 모드용).
+export function positionsFor(spec, closes, paramValue) {
+  return lag(rawSignalFor(spec, closes, paramValue));
+}
+
+// 집행 오버레이 포함 포지션(간편 모드). 원시신호 → 손절·익절·트레일링·사이징 → T+1 지연.
+export function buildPositions(spec, closes, paramValue, exec) {
+  const raw = rawSignalFor(spec, closes, paramValue);
+  const target = execActive(exec) ? applyExecution(closes, raw, exec) : raw;
+  return lag(target);
 }
 
 // spec에서 유효 그리드 산출(사전등록에서 잠근 값 우선).

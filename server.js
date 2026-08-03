@@ -7,7 +7,7 @@ import { dirname, join } from 'path';
 import { parseRequest } from './src/parse.js';
 import { runProtocol } from './src/protocol.js';
 import { TICKERS, UNIVERSE, REGIMES, getFree } from './src/data.js';
-import { STRATEGY_TYPES, normalizeSpec, positionsFor, gridFor } from './src/strategy.js';
+import { STRATEGY_TYPES, normalizeSpec, positionsFor, buildPositions, gridFor } from './src/strategy.js';
 import { runBacktest, buyHold } from './src/backtest.js';
 import { PASS_RULES } from './src/protocol.js';
 import { mulberry32, hashStr, bootstrapCalmarCI, timingShuffleControl, oosSplitIndex, equityToReturns } from './src/stats.js';
@@ -84,6 +84,17 @@ app.post('/api/simple', async (req, res) => {
     const to = body.to || new Date().toISOString().slice(0, 10);
     const from = body.from || `${new Date().getUTCFullYear() - 10}-01-01`;
 
+    // 집행 파라미터(간편 모드): 손절·익절·트레일링(%) + 사이징.
+    const pct = (v) => { const n = Number(v); return (isFinite(n) && n > 0 && n < 95) ? n / 100 : 0; };
+    const execP = {
+      stopLoss: pct(body.exec?.stopLoss),
+      takeProfit: pct(body.exec?.takeProfit),
+      trailingStop: pct(body.exec?.trailingStop),
+      sizing: ['full', 'half', 'volTarget'].includes(body.exec?.sizing) ? body.exec.sizing : 'full',
+      volTarget: 0.02, volWindow: 20, maxLeverage: 1,
+    };
+    const execOn = execP.stopLoss || execP.takeProfit || execP.trailingStop || execP.sizing !== 'full';
+
     const BOOT = 300, CONTROL = 200;
     // 거래비용 모델: 스프레드 + 변동성비례 슬리피지(레버리지 ETF 현실화).
     const costOpts = { commissionBps: 0, halfSpreadBps: 2, slippageVolMult: 0.05, volWindow: 20 };
@@ -109,14 +120,14 @@ app.post('/api/simple', async (req, res) => {
         const { name, bars } = await getFree(t, from, to);
         if (!bars || bars.length < 120) { rows.push({ ticker: t, name, error: '데이터 부족(통계 검정에 최소 ~120봉 필요)' }); continue; }
         const closes = bars.map((b) => b.close);
-        const pos = positionsFor(spec, closes, chosen);
+        const pos = buildPositions(spec, closes, chosen, execP);
         const run = runBacktest(bars, pos, costOpts);
         const strat = run.metrics;
         const bhRun = buyHold(bars, costOpts);
         const bh = bhRun.metrics;
 
         // 재현성: 종목+스펙+기간으로 시드 고정.
-        const rng = mulberry32(hashStr(`${t}|${JSON.stringify(spec)}|${from}|${to}`));
+        const rng = mulberry32(hashStr(`${t}|${JSON.stringify(spec)}|${JSON.stringify(execP)}|${from}|${to}`));
 
         // OOS 분리: 앞 60% train, 뒤 40% test (같은 포지션 규칙, 룩어헤드 없음).
         const k = oosSplitIndex(bars.length, 0.6);
@@ -181,10 +192,12 @@ app.post('/api/simple', async (req, res) => {
       dataSource: 'Yahoo Finance 조정종가(net-of-fee)',
       costModel: costOpts,
       iters: { bootstrap: BOOT, control: CONTROL, oosTrainFrac: 0.6 },
-      execution: 'T+1 · 100% 또는 현금',
+      execution: execOn
+        ? `T+1 · 손절 ${execP.stopLoss ? (execP.stopLoss * 100).toFixed(0) + '%' : '없음'} · 익절 ${execP.takeProfit ? (execP.takeProfit * 100).toFixed(0) + '%' : '없음'} · 트레일링 ${execP.trailingStop ? (execP.trailingStop * 100).toFixed(0) + '%' : '없음'} · 사이징 ${execP.sizing}`
+        : 'T+1 · 100% 또는 현금',
       benchmark: benchLabel,
     };
-    res.json({ ok: true, result: { rows, summary: { counts, total: rows.length }, spec: { type: spec.type, label, chosenParam: chosen }, from, to, runCard, benchmark: { kind: benchKind, label: benchLabel, note: benchNote } } });
+    res.json({ ok: true, result: { rows, summary: { counts, total: rows.length }, spec: { type: spec.type, label, chosenParam: chosen, exec: execOn ? execP : null }, from, to, runCard, benchmark: { kind: benchKind, label: benchLabel, note: benchNote } } });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: String(e.message || e) });

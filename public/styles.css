@@ -102,6 +102,12 @@ header.masthead { padding: 44px 0 24px; }
 .multi-comp { margin-top: 14px; background: rgba(255,206,107,.07); border: 1px solid rgba(255,206,107,.35); border-radius: 6px; padding: 11px 14px; font-size: 12px; line-height: 1.6; color: var(--dim); }
 .multi-comp b { color: var(--warn); }
 
+/* 고급 집행 */
+.exec-adv { margin: 4px 0 16px; border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px; background: var(--panel2); }
+.exec-adv summary { cursor: pointer; font-family: var(--sans); font-weight: 700; font-size: 12px; color: var(--dim); }
+.exec-adv[open] summary { margin-bottom: 12px; }
+.exec-adv .sub { margin-top: 10px; }
+
 /* 이전 실행과 비교 */
 .compare { margin-top: 14px; border: 1px solid var(--line2); border-radius: 8px; padding: 14px 16px; background: var(--panel2); }
 .cmp-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }

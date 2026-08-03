@@ -1,6 +1,6 @@
 // 전략 DSL·비용 모델 픽스처 테스트 — 손으로 계산한 값과 대조.
 import assert from 'node:assert';
-import { evalRuleStrategy, positionsFor } from '../src/strategy.js';
+import { evalRuleStrategy, positionsFor, buildPositions } from '../src/strategy.js';
 import { runBacktest, buyHold } from '../src/backtest.js';
 
 let pass = 0;
@@ -85,6 +85,34 @@ t('슬리피지 계수 0이면 스프레드만 부과', () => {
   const pos = b.map((_, i) => (i % 10 < 5 ? 1 : 0));
   const m = runBacktest(b, pos, { halfSpreadBps: 3, slippageVolMult: 0 }).metrics;
   assert(Math.abs(m.avgTurnBps - 3) < 1e-6, `편도 ≈3bps (got ${m.avgTurnBps})`);
+});
+
+// ── 집행 오버레이: 손절 ──
+t('손절 청산 후 신호 지속돼도 재진입 안 함', () => {
+  const closes = [100, 101, 102, 103, 88, 89, 90]; // i4에서 진입가 대비 -12% (< -10% 손절)
+  const always = { type: 'rule', long: { op: '>', left: { ind: 'price' }, right: 0 } }; // 항상 롱
+  // 진입 유지하다 i4 손절→0, 이후 차단(신호 안 꺼짐) → [1,1,1,1,0,0,0] → lag → [0,1,1,1,1,0,0]
+  const pos = buildPositions(always, closes, null, { stopLoss: 0.10 });
+  eq(pos, [0, 1, 1, 1, 1, 0, 0], '손절 포지션');
+});
+
+t('익절 +10% 청산', () => {
+  const closes = [100, 105, 110, 108, 107];
+  const always = { type: 'rule', long: { op: '>', left: { ind: 'price' }, right: 0 } };
+  // i2에서 +10% 익절 → target [1,1,0,0,0] → lag → [0,1,1,0,0]
+  eq(buildPositions(always, closes, null, { takeProfit: 0.10 }), [0, 1, 1, 0, 0], '익절 포지션');
+});
+
+t('사이징 절반 → 포지션 0.5', () => {
+  const closes = [100, 101, 102, 103];
+  const always = { type: 'rule', long: { op: '>', left: { ind: 'price' }, right: 0 } };
+  eq(buildPositions(always, closes, null, { sizing: 'half' }), [0, 0.5, 0.5, 0.5], '절반 사이징');
+});
+
+t('집행 미설정이면 positionsFor와 동일', () => {
+  const closes = [1, 2, 3, 2, 1, 2, 3];
+  const spec = { type: 'rule', long: { op: '>', left: { ind: 'price' }, right: 2 } };
+  eq(buildPositions(spec, closes, null, { sizing: 'full' }), positionsFor(spec, closes, null), '오버레이 무효과');
 });
 
 console.log(`\n${pass} passed`);

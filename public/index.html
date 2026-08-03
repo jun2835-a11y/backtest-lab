@@ -65,6 +65,22 @@
             </select>
           </div>
         </div>
+        <details class="exec-adv">
+          <summary>고급 집행 (선택) — 손절 · 익절 · 트레일링 · 사이징</summary>
+          <div class="prereg-grid">
+            <div class="field"><label>손절 %</label><input id="s-stop" type="number" min="0" step="1" placeholder="예: 15 (0=없음)"></div>
+            <div class="field"><label>익절 %</label><input id="s-tp" type="number" min="0" step="1" placeholder="0=없음"></div>
+            <div class="field"><label>트레일링 스톱 %</label><input id="s-trail" type="number" min="0" step="1" placeholder="0=없음"></div>
+            <div class="field"><label>포지션 사이징</label>
+              <select id="s-sizing">
+                <option value="full" selected>전량 (100%)</option>
+                <option value="half">절반 (50%)</option>
+                <option value="volTarget">변동성 타겟 (고변동 축소)</option>
+              </select>
+            </div>
+          </div>
+          <div class="sub">진입가 대비 손절/익절, 진입 후 최고가 대비 트레일링. 스톱 청산 후엔 신호가 꺼졌다 다시 켜질 때 재진입.</div>
+        </details>
         <div class="btn-row">
           <button class="btn primary" id="s-run">▶ 해석하기</button>
           <button class="btn hidden" id="s-rerun">지난 스펙 그대로 재실행</button>

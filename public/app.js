@@ -51,7 +51,7 @@ function initSimpleMode() {
     if (!PENDING) return;
     $('#s-confirm-panel').classList.add('hidden');
     saveSpec(PENDING);
-    runWith(PENDING.tickers, PENDING.strategy, PENDING.from, PENDING.to, PENDING.benchmark);
+    runWith(PENDING.tickers, PENDING.strategy, PENDING.from, PENDING.to, PENDING.benchmark, PENDING.exec);
   };
   $('#s-confirm-cancel').onclick = () => $('#s-confirm-panel').classList.add('hidden');
 
@@ -60,7 +60,7 @@ function initSimpleMode() {
   if (saved) {
     const b = $('#s-rerun');
     b.classList.remove('hidden');
-    b.onclick = () => { PENDING = saved; runWith(saved.tickers, saved.strategy, saved.from, saved.to, saved.benchmark); };
+    b.onclick = () => { PENDING = saved; runWith(saved.tickers, saved.strategy, saved.from, saved.to, saved.benchmark, saved.exec); };
   }
 }
 
@@ -190,10 +190,22 @@ async function runSimple() {
   const tickers = tk.length ? tk : typed;
   if (!tickers.length) { $('#s-status').innerHTML = '<span class="err">종목을 입력하세요. (또는 문장에 종목 포함)</span>'; return; }
   const benchmark = $('#s-benchmark').value;
-  PENDING = { strategy: spec.strategy, tickers, from, to, benchmark, notes: spec.notes, engine: spec.engine, downgraded: spec.downgraded, downgradeNote: spec.downgradeNote };
+  const exec = readExec();
+  PENDING = { strategy: spec.strategy, tickers, from, to, benchmark, exec, notes: spec.notes, engine: spec.engine, downgraded: spec.downgraded, downgradeNote: spec.downgradeNote };
   renderConfirm(PENDING);
 }
 const BENCH_KO = { self: '자기 매수후보유', spy: 'SPY 보유', cash: '현금 (0%)' };
+const SIZING_KO = { full: '전량(100%)', half: '절반(50%)', volTarget: '변동성 타겟' };
+function readExec() {
+  const num = (id) => { const v = parseFloat($(id).value); return isFinite(v) && v > 0 ? v : 0; };
+  const e = { stopLoss: num('#s-stop'), takeProfit: num('#s-tp'), trailingStop: num('#s-trail'), sizing: $('#s-sizing').value };
+  return e;
+}
+function execActiveC(e) { return e && (e.stopLoss || e.takeProfit || e.trailingStop || (e.sizing && e.sizing !== 'full')); }
+function descExec(e) {
+  if (!execActiveC(e)) return '손절·익절·트레일링 없음 · 사이징 전량(100%)';
+  return `손절 ${e.stopLoss ? e.stopLoss + '%' : '없음'} · 익절 ${e.takeProfit ? e.takeProfit + '%' : '없음'} · 트레일링 ${e.trailingStop ? e.trailingStop + '%' : '없음'} · 사이징 ${SIZING_KO[e.sizing] || e.sizing}`;
+}
 
 // ── 스펙을 사람이 읽는 말로 ──
 const OP_KO = { '>': '초과', '<': '미만', '>=': '이상', '<=': '이하', '==': '같음', 'cross_up': '상향돌파', 'cross_down': '하향돌파' };
@@ -247,15 +259,15 @@ function renderConfirm(p) {
     <div class="spec-line"><span class="k">기간</span><span class="v">${p.from} ~ ${p.to}</span></div>
     <div class="spec-line"><span class="k">전략</span><span class="v">${descStrategy(p.strategy)}</span></div>
     <div class="spec-line"><span class="k">판정 기준</span><span class="v">${BENCH_KO[p.benchmark] || '자기 매수후보유'} 대비 위험대비수익(칼마)</span></div>
+    <div class="spec-line"><span class="k">집행</span><span class="v">${descExec(p.exec)}</span></div>
     <div class="assump">
-      <div class="assump-t">고정 가정 (모두 명시)</div>
+      <div class="assump-t">가정 (모두 명시)</div>
       <ul>
-        <li>포지션: 100% 보유 또는 현금 (부분·분할 없음)</li>
-        <li>익절·손절: 없음</li>
-        <li>집행: 신호 다음 봉(T+1)</li>
-        <li>비용: 거래 왕복 5bps</li>
-        <li>데이터: Yahoo 조정종가 — 운용보수는 가격에 이미 반영(net-of-fee)</li>
-        <li>판정: 매수후보유 대비 칼마 (±10% 근소는 PUSH)</li>
+        <li>집행: <b>${descExec(p.exec)}</b></li>
+        <li>체결: 신호 다음 봉(T+1) 종가 · 부분체결·지정가 없음</li>
+        <li>비용: 반스프레드 2bps + 변동성비례 슬리피지(회전마다 편도)</li>
+        <li>데이터: Yahoo 조정종가 — 운용보수 가격 반영(net-of-fee)</li>
+        <li>판정: ${BENCH_KO[p.benchmark] || '자기 매수후보유'} 대비 칼마 (±10% 근소는 PUSH)</li>
       </ul>
     </div>
     <details class="jsonwrap"><summary>확정 JSON 스펙 (재현용) · <span class="tag">${engineTag}</span></summary>
@@ -269,7 +281,7 @@ function renderConfirm(p) {
 }
 
 let LAST_RESULT = null; // 내보내기용
-async function runWith(tickers, strategy, from, to, benchmark) {
+async function runWith(tickers, strategy, from, to, benchmark, exec) {
   const body = $('#s-result-body');
   $('#s-result-panel').classList.remove('hidden');
   $('#s-result-panel').classList.add('reveal');
@@ -279,10 +291,10 @@ async function runWith(tickers, strategy, from, to, benchmark) {
   try {
     const r = await (await fetch('/api/simple', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tickers, strategy, from, to, benchmark: benchmark || 'self' }),
+      body: JSON.stringify({ tickers, strategy, from, to, benchmark: benchmark || 'self', exec: exec || null }),
     })).json();
     if (!r.ok) throw new Error(r.error || '실행 실패');
-    LAST_RESULT = { result: r.result, input: { tickers, strategy, from, to, benchmark: benchmark || 'self' } };
+    LAST_RESULT = { result: r.result, input: { tickers, strategy, from, to, benchmark: benchmark || 'self', exec: exec || null } };
     renderSimpleResult(r.result);
   } catch (e) {
     body.innerHTML = `<div class="err">실행 오류: ${e.message}</div>`;
