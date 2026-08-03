@@ -11,6 +11,7 @@ import { STRATEGY_TYPES, normalizeSpec, positionsFor, buildPositions, gridFor } 
 import { runBacktest, buyHold } from './src/backtest.js';
 import { PASS_RULES } from './src/protocol.js';
 import { mulberry32, hashStr, bootstrapCalmarCI, timingShuffleControl, oosSplitIndex, equityToReturns } from './src/stats.js';
+import { alignSeries, computeWeights, simulatePortfolio, metricsFromEquitySlice } from './src/portfolio.js';
 
 const APP_VERSION = 'backtest-lab 0.2.0';
 
@@ -202,6 +203,102 @@ app.post('/api/simple', async (req, res) => {
     console.error(e);
     res.status(500).json({ error: String(e.message || e) });
   }
+});
+
+// 포트폴리오 모드: 여러 종목을 하나로 묶어 배분·리밸런싱·기여도.
+app.post('/api/portfolio', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const reqTickers = (body.tickers || []).map((t) => String(t).trim().toUpperCase()).filter(Boolean).slice(0, 12);
+    if (reqTickers.length < 2) return res.status(400).json({ error: '포트폴리오는 종목 2개 이상 필요합니다.' });
+
+    const inSpec = body.strategy || { type: 'ma_timing', maType: 'sma' };
+    let spec, chosen = null, sLabel;
+    if (inSpec.type === 'rule') { spec = inSpec; sLabel = inSpec.label || '커스텀 규칙'; }
+    else { spec = normalizeSpec(inSpec); const g = gridFor(spec); chosen = inSpec.chosenParam ?? spec.chosenParam ?? g.grid[Math.floor(g.grid.length / 2)]; spec.chosenParam = chosen; sLabel = ({ ma_timing: `MA·${chosen}`, dual_ma: `골든크로스·${chosen}`, vol_target: `변동성·${chosen}` })[spec.type] || spec.type; }
+
+    const to = body.to || new Date().toISOString().slice(0, 10);
+    const from = body.from || `${new Date().getUTCFullYear() - 10}-01-01`;
+    const pct = (v) => { const n = Number(v); return (isFinite(n) && n > 0 && n < 95) ? n / 100 : 0; };
+    const execP = { stopLoss: pct(body.exec?.stopLoss), takeProfit: pct(body.exec?.takeProfit), trailingStop: pct(body.exec?.trailingStop), sizing: ['full', 'half', 'volTarget'].includes(body.exec?.sizing) ? body.exec.sizing : 'full', volTarget: 0.02, volWindow: 20, maxLeverage: 1 };
+    const costOpts = { commissionBps: 0, halfSpreadBps: 2, slippageVolMult: 0.05, volWindow: 20 };
+    const allocation = ['equal', 'inverseVol', 'custom'].includes(body.allocation) ? body.allocation : 'equal';
+    const rebalance = ['none', 'monthly', 'quarterly', 'yearly'].includes(body.rebalance) ? body.rebalance : 'none';
+
+    // 데이터 수집(부분 실패는 제외).
+    const perTicker = {}; const dropped = [];
+    for (const t of reqTickers) {
+      try { const { bars } = await getFree(t, from, to); if (bars && bars.length >= 60) perTicker[t] = bars; else dropped.push(`${t}(데이터부족)`); }
+      catch (e) { dropped.push(`${t}(${String(e.message || e).slice(0, 30)})`); }
+    }
+    const used = Object.keys(perTicker);
+    if (used.length < 2) return res.status(400).json({ error: `유효 종목이 부족합니다. 제외: ${dropped.join(', ') || '없음'}` });
+
+    const aligned = alignSeries(perTicker);
+    if (aligned.dates.length < 120) return res.status(400).json({ error: `공통 거래일이 부족합니다(${aligned.dates.length}일). 캘린더가 겹치는 종목·더 긴 기간을 쓰세요.` });
+
+    const weights = computeWeights(aligned, allocation, body.weights);
+    const positions = {}, bhPositions = {};
+    for (const t of used) {
+      positions[t] = buildPositions(spec, aligned.closesByTicker[t], chosen, execP);
+      bhPositions[t] = new Array(aligned.dates.length).fill(1); // 매수후보유
+    }
+
+    const port = simulatePortfolio(aligned, positions, weights, { rebalance, costOpts });
+    const benchKind = ['self', 'spy', 'cash'].includes(body.benchmark) ? body.benchmark : 'self';
+    const benchSelf = simulatePortfolio(aligned, bhPositions, weights, { rebalance, costOpts }); // 동일 포트 매수후보유
+    let bench = benchSelf.metrics, benchEquity = benchSelf.equity, benchLabel = '동일 포트 매수후보유';
+    if (benchKind === 'cash') { bench = { calmar: 0, cagr: 0, mdd: 0 }; benchEquity = null; benchLabel = '현금 0%'; }
+    else if (benchKind === 'spy') {
+      try { const { bars: sb } = await getFree('SPY', from, to); const bhs = buyHold(sb, costOpts).metrics; bench = bhs; benchLabel = 'SPY 보유'; benchEquity = null; }
+      catch (e) { benchLabel = '동일 포트 매수후보유(SPY 실패)'; }
+    }
+
+    // OOS: 공통축 60/40. 연속 자산곡선 하위구간.
+    const k = oosSplitIndex(aligned.dates.length, 0.6);
+    const oosTest = metricsFromEquitySlice(port.equity, aligned.ts, k, aligned.dates.length - 1);
+    const oosBenchTest = (benchKind === 'self') ? metricsFromEquitySlice(benchSelf.equity, aligned.ts, k, aligned.dates.length - 1) : (benchKind === 'cash' ? { calmar: 0 } : bench);
+
+    // 부트스트랩 CI(포트 수익).
+    const rng = mulberry32(hashStr(`PORT|${used.join(',')}|${JSON.stringify(spec)}|${JSON.stringify(execP)}|${allocation}|${rebalance}|${from}|${to}`));
+    const calmarCI = bootstrapCalmarCI(equityToReturns(port.equity), { block: 20, iters: 300, rng });
+
+    // 판정(포트 vs 벤치): 베이스 + OOS 유지 + CI 양수.
+    const baseBeat = port.metrics.calmar > bench.calmar;
+    const oosBeat = oosTest.calmar > (oosBenchTest.calmar ?? 0);
+    const ciPositive = calmarCI ? calmarCI.lo > 0 : false;
+    const denom = Math.abs(bench.calmar) > 1e-9 ? Math.abs(bench.calmar) : 1;
+    const nearTie = Math.abs((port.metrics.calmar - bench.calmar) / denom) <= 0.10;
+    let state, label;
+    if (!baseBeat) { state = 'cut'; label = 'NOT-QUANT'; }
+    else if (nearTie) { state = 'push'; label = 'PUSH'; }
+    else if (oosBeat && ciPositive) { state = 'quant'; label = 'QUANT'; }
+    else { state = 'weak'; label = 'QUANT?'; }
+
+    // 차트 다운샘플.
+    const N = aligned.dates.length, stride = Math.max(1, Math.floor(N / 160));
+    const pts = [];
+    for (let i = 0; i < N; i += stride) pts.push({ i, s: port.equity[i], b: (benchEquity ? benchEquity[i] : port.equity[i]), d: port.drawdown[i] });
+    if (pts[pts.length - 1].i !== N - 1) pts.push({ i: N - 1, s: port.equity[N - 1], b: (benchEquity ? benchEquity[N - 1] : port.equity[N - 1]), d: port.drawdown[N - 1] });
+
+    // 기여도(근사): 슬리브 P&L 정규화.
+    const totalPnl = port.metrics.totalReturn || 1e-9;
+    const contrib = used.map((t) => ({ ticker: t, weight: weights[t], avgWeight: port.contrib[t].avgWeight, pnl: port.contrib[t].pnl, share: port.contrib[t].pnl / totalPnl })).sort((a, b) => b.pnl - a.pnl);
+
+    const runCard = { version: APP_VERSION, ranAt: new Date().toISOString(), dataSource: 'Yahoo Finance 조정종가(net-of-fee)', costModel: costOpts, allocation, rebalance, iters: { bootstrap: 300, oosTrainFrac: 0.6 }, benchmark: benchLabel };
+
+    res.json({ ok: true, result: {
+      portfolio: {
+        label: sLabel, metrics: port.metrics, verdict: { state, label },
+        oos: { split: aligned.dates[k], splitIdx: k, test: oosTest, benchTest: oosBenchTest },
+        calmarCI, checks: { baseBeat, oosBeat, ciPositive },
+        chart: { pts, n: N, from: aligned.dates[0], to: aligned.dates[N - 1], trades: [] },
+        contrib, weights, allocation, rebalance, benchmark: { kind: benchKind, label: benchLabel, calmar: bench.calmar, cagr: bench.cagr, mdd: bench.mdd },
+      },
+      spec: { type: spec.type, label: sLabel, exec: execP.stopLoss || execP.takeProfit || execP.trailingStop || execP.sizing !== 'full' ? execP : null },
+      from: aligned.dates[0], to: aligned.dates[N - 1], used, dropped, runCard,
+    } });
+  } catch (e) { console.error(e); res.status(500).json({ error: String(e.message || e) }); }
 });
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));

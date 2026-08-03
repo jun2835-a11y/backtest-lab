@@ -30,6 +30,7 @@
     <!-- 모드 전환 -->
     <div class="mode-switch">
       <button class="ms active" data-mode="simple">간편 백테스트</button>
+      <button class="ms" data-mode="portfolio">포트폴리오</button>
       <button class="ms" data-mode="pro">정밀 검증 <span class="ms-tag">고급</span></button>
     </div>
 
@@ -102,6 +103,53 @@
       <section class="panel hidden" id="s-result-panel">
         <h2>결과 · 안내판</h2>
         <div id="s-result-body"></div>
+      </section>
+    </div>
+
+    <!-- ══ 포트폴리오 모드 ══ -->
+    <div id="mode-portfolio" class="hidden">
+      <section class="panel">
+        <h2>포트폴리오 백테스트</h2>
+        <div class="field" style="margin-bottom:16px">
+          <label>종목 — 2개 이상 (쉼표로)</label>
+          <input id="pf-tickers" type="text" autocomplete="off" spellcheck="false" placeholder="예: SPY, TLT, GLD 또는 TQQQ, SOXL, UPRO">
+        </div>
+        <div class="field" style="margin-bottom:16px">
+          <label>전략 — 자연어로 (모든 종목에 공통 적용)</label>
+          <input id="pf-nl" type="text" autocomplete="off" spellcheck="false" placeholder="예: 200일 이동평균 위일 때만 보유">
+        </div>
+        <div class="prereg-grid">
+          <div class="field"><label>기간</label>
+            <select id="pf-period"><option value="5">최근 5년</option><option value="10" selected>최근 10년</option><option value="max">최대 (2000~)</option></select>
+          </div>
+          <div class="field"><label>자산배분</label>
+            <select id="pf-alloc"><option value="equal" selected>동일가중</option><option value="inverseVol">역변동성(저변동 비중↑)</option></select>
+          </div>
+          <div class="field"><label>리밸런싱</label>
+            <select id="pf-rebal"><option value="none">없음(드리프트)</option><option value="monthly">매월</option><option value="quarterly" selected>분기</option><option value="yearly">매년</option></select>
+          </div>
+          <div class="field"><label>판정 기준</label>
+            <select id="pf-benchmark"><option value="self" selected>동일 포트 매수후보유</option><option value="spy">SPY 보유</option><option value="cash">현금 (0%)</option></select>
+          </div>
+        </div>
+        <details class="exec-adv">
+          <summary>고급 집행 (선택) — 손절 · 익절 · 트레일링 · 사이징</summary>
+          <div class="prereg-grid">
+            <div class="field"><label>손절 %</label><input id="pf-stop" type="number" min="0" step="1" placeholder="0=없음"></div>
+            <div class="field"><label>익절 %</label><input id="pf-tp" type="number" min="0" step="1" placeholder="0=없음"></div>
+            <div class="field"><label>트레일링 %</label><input id="pf-trail" type="number" min="0" step="1" placeholder="0=없음"></div>
+            <div class="field"><label>포지션 사이징</label><select id="pf-sizing"><option value="full" selected>전량</option><option value="half">절반</option><option value="volTarget">변동성 타겟</option></select></div>
+          </div>
+        </details>
+        <div class="btn-row">
+          <button class="btn primary" id="pf-run">▶ 포트폴리오 백테스트</button>
+          <span id="pf-status"></span>
+        </div>
+        <div class="verdict-legend">각 종목에 <b>같은 전략</b>을 적용하고 <b>목표 비중</b>으로 묶어 리밸런싱합니다. 신호가 꺼진 종목의 몫은 현금으로 보유. 판정: 선택 기준 대비 위험대비수익(칼마).</div>
+      </section>
+      <section class="panel hidden" id="pf-result-panel">
+        <h2>포트폴리오 결과</h2>
+        <div id="pf-result-body"></div>
       </section>
     </div>
 

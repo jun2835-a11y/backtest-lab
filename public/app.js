@@ -41,12 +41,14 @@ function initSimpleMode() {
       $$('.mode-switch .ms').forEach((x) => x.classList.toggle('active', x === b));
       const mode = b.dataset.mode;
       $('#mode-simple').classList.toggle('hidden', mode !== 'simple');
+      $('#mode-portfolio').classList.toggle('hidden', mode !== 'portfolio');
       $('#mode-pro').classList.toggle('hidden', mode !== 'pro');
     };
   });
 
   // 전략은 자연어 입력만 사용 — 해석 → 확인 → 실행
   $('#s-run').onclick = runSimple;
+  $('#pf-run').onclick = runPortfolio;
   $('#s-confirm-run').onclick = () => {
     if (!PENDING) return;
     $('#s-confirm-panel').classList.add('hidden');
@@ -136,6 +138,21 @@ function exportShare() {
 }
 // 공유 링크로 열렸을 때 동일 입력 재실행.
 function tryShareLink() {
+  const pf = (location.hash || '').match(/pf=([^&]+)/);
+  if (pf) {
+    try {
+      const input = JSON.parse(b64decode(pf[1]));
+      $('.mode-switch .ms[data-mode="portfolio"]').click();
+      if (input.tickers) $('#pf-tickers').value = input.tickers.join(', ');
+      $('#pf-nl').value = input.strategy?.label || '(공유된 스펙)';
+      if (input.allocation) $('#pf-alloc').value = input.allocation;
+      if (input.rebalance) $('#pf-rebal').value = input.rebalance;
+      if (input.benchmark) $('#pf-benchmark').value = input.benchmark;
+      // 스펙을 직접 실행(재해석 없이): parse 우회 위해 임시로 payload 구성
+      runPortfolioWith(input);
+      return true;
+    } catch (e) { return false; }
+  }
   const m = (location.hash || '').match(/run=([^&]+)/);
   if (!m) return false;
   try {
@@ -299,6 +316,103 @@ async function runWith(tickers, strategy, from, to, benchmark, exec) {
   } catch (e) {
     body.innerHTML = `<div class="err">실행 오류: ${e.message}</div>`;
   }
+}
+
+// ── 포트폴리오 모드 ──
+const ALLOC_KO = { equal: '동일가중', inverseVol: '역변동성' };
+const REBAL_KO = { none: '없음', monthly: '매월', quarterly: '분기', yearly: '매년' };
+function pfReadExec() {
+  const num = (id) => { const v = parseFloat($(id).value); return isFinite(v) && v > 0 ? v : 0; };
+  return { stopLoss: num('#pf-stop'), takeProfit: num('#pf-tp'), trailingStop: num('#pf-trail'), sizing: $('#pf-sizing').value };
+}
+async function runPortfolio() {
+  const tickers = $('#pf-tickers').value.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
+  if (tickers.length < 2) { $('#pf-status').innerHTML = '<span class="err">종목을 2개 이상 입력하세요.</span>'; return; }
+  const nl = $('#pf-nl').value.trim();
+  if (!nl) { $('#pf-status').innerHTML = '<span class="err">전략을 자연어로 입력하세요.</span>'; return; }
+  const v = $('#pf-period').value, today = new Date(), to = today.toISOString().slice(0, 10);
+  const from = v === 'max' ? '2000-01-01' : new Date(Date.UTC(today.getUTCFullYear() - parseInt(v, 10), today.getUTCMonth(), today.getUTCDate())).toISOString().slice(0, 10);
+  const body = $('#pf-result-body');
+  $('#pf-result-panel').classList.remove('hidden');
+  $('#pf-result-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  body.innerHTML = '<div class="loading"><span class="spinner"></span>전략 해석 중…</div>';
+  $('#pf-status').innerHTML = '';
+  let spec;
+  try { spec = (await parseNLraw(nl)).strategy; } catch (e) { body.innerHTML = `<div class="err">해석 오류: ${e.message}</div>`; return; }
+  const payload = { tickers, strategy: spec, from, to, allocation: $('#pf-alloc').value, rebalance: $('#pf-rebal').value, benchmark: $('#pf-benchmark').value, exec: pfReadExec() };
+  runPortfolioWith(payload);
+}
+async function runPortfolioWith(payload) {
+  const body = $('#pf-result-body');
+  $('#pf-result-panel').classList.remove('hidden');
+  $('#pf-result-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  body.innerHTML = '<div class="loading"><span class="spinner"></span>포트폴리오 시뮬레이션 중… (정렬·리밸런싱·통계)</div>';
+  try {
+    const r = await (await fetch('/api/portfolio', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })).json();
+    if (!r.ok) throw new Error(r.error || '실행 실패');
+    LAST_RESULT = { result: r.result, input: payload, kind: 'portfolio' };
+    renderPortfolio(r.result);
+  } catch (e) { body.innerHTML = `<div class="err">실행 오류: ${e.message}</div>`; }
+}
+// NL → 스펙만(폼 채우지 않음)
+async function parseNLraw(nl) {
+  const r = await (await fetch('/api/parse', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ request: nl, mode: 'simple' }) })).json();
+  if (!r.ok) throw new Error(r.error || '해석 실패');
+  return r.spec;
+}
+function renderPortfolio(res) {
+  const body = $('#pf-result-body');
+  const p = res.portfolio, m = p.metrics, b = p.benchmark;
+  const tagCls = p.verdict.state === 'quant' ? 'pass' : p.verdict.state === 'cut' ? 'fail' : 'pushtag';
+  const dropNote = res.dropped && res.dropped.length ? `<div class="downgrade-banner">⚠ 제외된 종목: ${res.dropped.join(', ')} (데이터 부족/캘린더 불일치)</div>` : '';
+  const benchRow = b.kind === 'cash' ? '' : metricRow(`기준: ${b.label}`, b, 'bh', null);
+  const maxShare = Math.max(...p.contrib.map((c) => Math.abs(c.share)), 0.01);
+  const contribRows = p.contrib.map((c) => {
+    const w = (Math.abs(c.share) / maxShare) * 100;
+    return `<tr><td>${c.ticker}</td><td class="num">${fmtPct(c.avgWeight)}</td><td class="num ${c.pnl >= 0 ? 'up' : 'down'}">${c.pnl >= 0 ? '+' : ''}${(c.pnl * 100).toFixed(1)}%p</td>
+      <td class="barcell"><div class="bar ${c.pnl >= 0 ? 'pos' : 'neg'}" style="width:${w.toFixed(0)}%"></div></td>
+      <td class="num">${(c.share * 100).toFixed(0)}%</td></tr>`;
+  }).join('');
+  const ci = p.calmarCI, k = p.checks;
+
+  body.innerHTML = `
+    ${dropNote}
+    <div class="pf-verdict ${p.verdict.state}">
+      <div class="pfv-tag ${tagCls}">${p.verdict.label}</div>
+      <div class="pfv-meta">
+        <div class="pfv-title">${res.used.join(' · ')}</div>
+        <div class="pfv-sub">${p.label} · ${ALLOC_KO[p.allocation]} · 리밸 ${REBAL_KO[p.rebalance]} · ${res.from}~${res.to} · 기준 ${b.label}</div>
+      </div>
+    </div>
+    ${metricsTable(metricRow('포트폴리오', m, 'strat', b.kind === 'cash' ? null : b) + benchRow)}
+    ${equityChartSVG(p.chart, p.oos.splitIdx)}
+    <div class="stat-grid">
+      <div class="stat-box"><div class="sb-t">표본 외(OOS) — 뒤 40% · 분리 ${p.oos.split}</div>
+        <div class="sb-row"><b class="${p.oos.test.calmar > (p.oos.benchTest.calmar ?? 0) ? 'win' : 'lose'}">${fmtR(p.oos.test.calmar)}</b> <span class="vs">vs 기준 ${fmtR(p.oos.benchTest.calmar ?? 0)}</span></div>
+        <div class="sb-hint">안 본 뒷구간에서도 기준 대비 우위인가</div></div>
+      <div class="stat-box"><div class="sb-t">칼마 90% 신뢰구간 (부트스트랩)</div>
+        <div class="sb-row"><b>${ci ? fmtR(ci.lo) + ' ~ ' + fmtR(ci.hi) : '—'}</b></div>
+        <div class="sb-hint">단일 경로의 운인지 — 재배열 시 범위</div></div>
+      <div class="stat-box"><div class="sb-t">확증</div>
+        <div class="sb-checks">${CHK(k.baseBeat)} 베이스 우위 · ${CHK(k.oosBeat)} OOS 유지 · ${CHK(k.ciPositive)} CI 양수</div>
+        <div class="sb-hint">회전 ${m.turns}회 · 리밸 ${m.rebalances}회 · 총비용 −${(m.costPaid * 100).toFixed(2)}%p</div></div>
+    </div>
+    <div class="contrib-wrap">
+      <div class="cw-t">종목 기여도 분해 (근사) — 총수익 ${(m.totalReturn * 100).toFixed(1)}%p 중</div>
+      <table class="cmp-table"><thead><tr><th>Ticker</th><th>평균 비중</th><th>기여 P&L</th><th>기여도</th><th>몫</th></tr></thead><tbody>${contribRows}</tbody></table>
+    </div>
+    <div class="export-bar"><span class="eb-label">내보내기</span>
+      <button class="btn ghost" id="pf-exp-json">JSON</button>
+      <button class="btn ghost" id="pf-exp-share">공유 링크 복사</button>
+      <span id="pf-exp-status"></span></div>
+    <div class="provenance">데이터: Yahoo 조정종가 <b>(net-of-fee)</b> · 공통 거래일 교집합 정렬 · 거래비용 변동성비례 + 리밸런싱 비용 · 기여도는 슬리브 P&L 근사(리밸런싱 교차항 제외)
+      <br>⚠ <b>생존 편향</b>: 살아남은 종목만 · <b>역변동성 가중</b>은 전기간 변동성 사용(경미한 룩어헤드).</div>`;
+  $('#pf-exp-json').onclick = () => { if (LAST_RESULT) download(`portfolio_${res.from}_${res.to}.json`, JSON.stringify(LAST_RESULT, null, 2), 'application/json'); };
+  $('#pf-exp-share').onclick = () => {
+    const code = b64encode(JSON.stringify({ ...LAST_RESULT.input, _pf: 1 }));
+    const url = `${location.origin}${location.pathname}#pf=${code}`;
+    navigator.clipboard?.writeText(url).then(() => { $('#pf-exp-status').textContent = '링크 복사됨 ✓'; });
+  };
 }
 
 // 서버 판정 상태 → 보드 색/태그.
@@ -912,9 +1026,17 @@ async function demoCompare() {
   await runWith(tk, { type: 'ma_timing', maType: 'sma', chosenParam: 200, label: 'MA·200' }, from, to, 'self');
   await runWith(tk, { type: 'ma_timing', maType: 'sma', chosenParam: 100, label: 'MA·100' }, from, to, 'self');
 }
+async function demoPortfolio() {
+  $('.mode-switch .ms[data-mode="portfolio"]').click();
+  $('#pf-tickers').value = 'SPY, TLT, GLD';
+  $('#pf-nl').value = '200일 이동평균 위일 때만 보유';
+  $('#pf-rebal').value = 'quarterly';
+  await runPortfolioWith({ tickers: ['SPY', 'TLT', 'GLD'], strategy: { type: 'ma_timing', maType: 'sma', chosenParam: 200, label: 'MA·200' }, from: '2010-01-01', to: '2025-12-31', allocation: 'equal', rebalance: 'quarterly', benchmark: 'self', exec: {} });
+}
 boot().then(() => {
   if (tryShareLink()) return;
   const d = new URLSearchParams(location.search).get('demo');
+  if (d === 'portfolio') return demoPortfolio();
   if (d === 'simple') demoSimple();
   else if (d === 'confirm') demoConfirm();
   else if (d === 'compare') demoCompare();
